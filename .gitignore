@@ -1,0 +1,35 @@
+# Node (frontend)
+/frontend/node_modules/
+/frontend/dist/
+/frontend/.env
+/frontend/.next/
+/frontend/.cache/
+/frontend/.DS_Store
+
+# Python (backend)
+/backend/__pycache__/
+/backend/.env
+/backend/.venv/
+/backend/venv/
+/backend/.mypy_cache/
+/backend/.pytest_cache/
+/backend/.DS_Store
+/backend/.coverage
+/backend/.vscode/
+/backend/.idea/
+/backend/.pylint.d/
+
+# System
+.DS_Store
+*.log
+.env
+.env.*
+
+# Docker
+/db_data/
+
+# VSCode
+.vscode/
+
+# Ignore Copilot instructions (optional, remove if you want to track changes)
+.github/
