@@ -4,9 +4,9 @@ import Navbar from '../components/NavBar';
 
 const fontFamily = `'Inter', 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif`;
 
-const Login: React.FC = () => {
-  const handleLogin = () => {
-    localStorage.setItem('user', JSON.stringify({ id: 1, business_id: 1, email: 'demo@calendio.com' }));
+const Signup: React.FC = () => {
+  const handleSignup = () => {
+    // TODO: Implement real signup logic
     window.location.href = '/dashboard';
   };
 
@@ -19,6 +19,7 @@ const Login: React.FC = () => {
         alignItems: 'center',
         justifyContent: 'center',
         minHeight: 'calc(100vh - 65px)',
+        padding: '24px',
       }}>
         <div style={{
           background: '#fff',
@@ -30,11 +31,31 @@ const Login: React.FC = () => {
           boxShadow: '0 4px 32px rgba(30,41,59,0.08)',
         }}>
           <h1 style={{ fontSize: 28, fontWeight: 800, color: '#0f172a', marginBottom: 8, letterSpacing: '-0.5px' }}>
-            Welcome back
+            Create your account
           </h1>
           <p style={{ fontSize: 15, color: '#64748b', marginBottom: 32 }}>
-            Log in to your Calendio account
+            Get started with Calendio for free
           </p>
+
+          <label style={{ fontSize: 13, fontWeight: 600, color: '#374151', display: 'block', marginBottom: 6 }}>
+            Business Name
+          </label>
+          <input
+            type="text"
+            placeholder="Your Business"
+            style={{
+              width: '100%',
+              padding: '10px 14px',
+              border: '1px solid #e2e8f0',
+              borderRadius: 8,
+              fontSize: 15,
+              marginBottom: 20,
+              outline: 'none',
+              fontFamily,
+              boxSizing: 'border-box',
+              color: '#0f172a',
+            }}
+          />
 
           <label style={{ fontSize: 13, fontWeight: 600, color: '#374151', display: 'block', marginBottom: 6 }}>
             Email
@@ -77,7 +98,7 @@ const Login: React.FC = () => {
           />
 
           <button
-            onClick={handleLogin}
+            onClick={handleSignup}
             style={{
               width: '100%',
               padding: '12px',
@@ -93,13 +114,13 @@ const Login: React.FC = () => {
               transition: 'background 0.2s',
             }}
           >
-            Log In
+            Create Account
           </button>
 
           <p style={{ textAlign: 'center', fontSize: 14, color: '#64748b', margin: 0 }}>
-            Don't have an account?{' '}
-            <Link to="/signup" style={{ color: '#2563eb', fontWeight: 600, textDecoration: 'none' }}>
-              Sign up
+            Already have an account?{' '}
+            <Link to="/login" style={{ color: '#2563eb', fontWeight: 600, textDecoration: 'none' }}>
+              Log in
             </Link>
           </p>
         </div>
@@ -108,4 +129,4 @@ const Login: React.FC = () => {
   );
 };
 
-export default Login;
+export default Signup;
