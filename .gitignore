@@ -1,3 +1,82 @@
+########################
+# OS & Editor files
+########################
+.DS_Store
+Thumbs.db
+
+.vscode/
+.idea/
+*.swp
+*.swo
+
+########################
+# Python bytecode/cache
+########################
+__pycache__/
+*.py[cod]
+*$py.class
+
+########################
+# Virtual environments
+########################
+env/
+venv/
+.venv/
+.envrc
+
+########################
+# Build / distribution
+########################
+build/
+dist/
+eggs/
+*.egg-info/
+.eggs/
+develop-eggs/
+parts/
+sdist/
+var/
+wheels/
+
+########################
+# Logs & coverage
+########################
+*.log
+logs/
+.coverage
+.coverage.*
+.cache/
+.pytest_cache/
+.mypy_cache/
+
+########################
+# Environment & secrets
+########################
+.env
+.env.*
+*.env
+**/.env
+**/.env.*
+**/*.env
+
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# JSON / credential files
+credentials.json
+**/credentials.json
+secrets.*
+*.secret
+*.secrets
+
+########################
+# Project-specific
+########################
+backend/agents/.env
+backend/agents/credentials.json
+
 # Node (frontend)
 /frontend/node_modules/
 /frontend/dist/
