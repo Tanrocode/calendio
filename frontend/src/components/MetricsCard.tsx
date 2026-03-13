@@ -5,11 +5,15 @@ type Metrics = {
   total_appointments_created: number;
 };
 
-const MetricsCard: React.FC<{ metrics: Metrics }> = ({ metrics }) => (
+const MetricsCard: React.FC<{ metrics: Metrics }> = ({ metrics }) => {
+  if (!metrics) return null; // or a loading/placeholder state
+  return (
+  
   <div className="border rounded p-4 mb-4 bg-gray-50">
     <div className="font-semibold">Total Conversations: {metrics.total_conversations}</div>
     <div className="font-semibold">Total Appointments: {metrics.total_appointments_created}</div>
   </div>
-);
+)
+}
 
 export default MetricsCard;
