@@ -1,6 +1,8 @@
 from langchain.schema import BaseOutputParser
 from typing import Dict, Any
 
+from ..tools.calendar_tools import check_availability, create_appointment
+
 class SchedulingAgent:
     """
     LangChain-based scheduling agent for Calendio.
@@ -16,7 +18,7 @@ class SchedulingAgent:
         intent = "BOOK" if "book" in message.lower() else "UNKNOWN"
         slots = {"date": "2026-03-03", "time": "10:00", "service": "Consultation"} if intent == "BOOK" else {}
         # Call tools (mocked)
-        from ..tools.calendar_tools import check_availability, create_appointment
+        
         available = check_availability(business_id, slots.get("date")) if intent == "BOOK" else True
         if intent == "BOOK" and available:
             create_appointment(business_id, slots)

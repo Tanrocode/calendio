@@ -2,6 +2,8 @@ import React, { useEffect, useState } from 'react';
 import axios from 'axios';
 import { getMetrics } from '../services/api.ts';
 import MetricsCard from '../components/MetricsCard.tsx';
+import Navbar from '../components/NavBar.tsx';
+import '../styles/Dashboard.css';
 
 type Appointment = {
   customer_name: string;
@@ -69,7 +71,7 @@ const Dashboard: React.FC = () => {
     const end = `${date}T${endTime}`;
 
     try {
-      const response = await axios.post(
+      await axios.post(
         `${API_BASE}/add-event`,
         {
           title,
@@ -105,122 +107,135 @@ const Dashboard: React.FC = () => {
   };
 
   return (
-    <div className="p-6 max-w-2xl mx-auto">
-      <h1 className="text-2xl font-bold mb-4">Dashboard</h1>
-      <MetricsCard metrics={metrics} />
-      <h2 className="text-xl font-semibold mt-6 mb-2">Upcoming Appointments</h2>
+    <div className="dashboard-page">
+      <Navbar />
+      <div className="dashboard-shell">
+        <div className="dashboard-card">
+          <h1 className="dashboard-title">Dashboard</h1>
 
-      {/* Google auth + event creation */}
-      {eventMessage && (
-        <div
-          className={`mt-4 mb-2 rounded px-3 py-2 text-sm ${
-            eventMessageType === 'success'
-              ? 'bg-green-50 text-green-800 border border-green-200'
-              : 'bg-red-50 text-red-800 border border-red-200'
-          }`}
-        >
-          {eventMessage}
-        </div>
-      )}
+          <MetricsCard metrics={metrics} />
+          <h2 className="dashboard-section-title">Upcoming Appointments</h2>
 
-      <button
-        type="button"
-        className="mt-2 px-4 py-2 rounded bg-blue-600 text-white hover:bg-blue-700"
-        onClick={handleConnectGoogle}
-      >
-        Connect Google Calendar
-      </button>
+          {/* Google auth + event creation */}
+          {eventMessage && (
+            <div
+              className={[
+                'dashboard-alert',
+                eventMessageType === 'success'
+                  ? 'dashboard-alert-success'
+                  : 'dashboard-alert-error',
+              ].join(' ')}
+            >
+              {eventMessage}
+            </div>
+          )}
 
-      <form className="mt-4 space-y-4">
-        <div>
-          <label className="block text-sm font-medium mb-1" htmlFor="event-title">
-            Event title
-          </label>
-          <input
-            id="event-title"
-            type="text"
-            className="w-full border rounded px-3 py-2"
-            placeholder="Consultation with client"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-          />
-        </div>
-
-        <div>
-          <label className="block text-sm font-medium mb-1" htmlFor="event-description">
-            Description
-          </label>
-          <textarea
-            id="event-description"
-            className="w-full border rounded px-3 py-2"
-            rows={3}
-            placeholder="Optional notes about the appointment"
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-          />
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div>
-            <label className="block text-sm font-medium mb-1" htmlFor="event-date">
-              Date
-            </label>
-            <input
-              id="event-date"
-              type="date"
-              className="w-full border rounded px-3 py-2"
-              value={date}
-              onChange={(e) => setDate(e.target.value)}
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium mb-1" htmlFor="event-start">
-              Start time
-            </label>
-            <input
-              id="event-start"
-              type="time"
-              className="w-full border rounded px-3 py-2"
-              value={startTime}
-              onChange={(e) => setStartTime(e.target.value)}
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium mb-1" htmlFor="event-end">
-              End time
-            </label>
-            <input
-              id="event-end"
-              type="time"
-              className="w-full border rounded px-3 py-2"
-              value={endTime}
-              onChange={(e) => setEndTime(e.target.value)}
-            />
-          </div>
-        </div>
-
-        <div>
           <button
             type="button"
-            className="px-4 py-2 rounded bg-green-600 text-white hover:bg-green-700"
-            onClick={handleCreateEvent}
+            className="dashboard-button dashboard-button-primary"
+            style={{ marginTop: 6 }}
+            onClick={handleConnectGoogle}
           >
-            Create Google Calendar Event
+            Connect Google Calendar
           </button>
-        </div>
-      </form>
 
-      <ul className="space-y-2 mt-6">
-        {Array.isArray(appointments) &&
-          appointments.map((a, i) => (
-            <li key={i} className="border rounded p-2">
-              <div><b>{a.customer_name}</b> — {a.service}</div>
-              <div>{a.start_time} to {a.end_time}</div>
-            </li>
-          ))}
-      </ul>
+          <form className="dashboard-form">
+            <div>
+              <label className="dashboard-label" htmlFor="event-title">
+                Event title
+              </label>
+              <input
+                id="event-title"
+                type="text"
+                className="dashboard-input"
+                placeholder="Consultation with client"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+              />
+            </div>
+
+            <div>
+              <label className="dashboard-label" htmlFor="event-description">
+                Description
+              </label>
+              <textarea
+                id="event-description"
+                className="dashboard-textarea"
+                rows={3}
+                placeholder="Optional notes about the appointment"
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+              />
+            </div>
+
+            <div className="dashboard-form-grid">
+              <div>
+                <label className="dashboard-label" htmlFor="event-date">
+                  Date
+                </label>
+                <input
+                  id="event-date"
+                  type="date"
+                  className="dashboard-input"
+                  value={date}
+                  onChange={(e) => setDate(e.target.value)}
+                />
+              </div>
+
+              <div>
+                <label className="dashboard-label" htmlFor="event-start">
+                  Start time
+                </label>
+                <input
+                  id="event-start"
+                  type="time"
+                  className="dashboard-input"
+                  value={startTime}
+                  onChange={(e) => setStartTime(e.target.value)}
+                />
+              </div>
+
+              <div>
+                <label className="dashboard-label" htmlFor="event-end">
+                  End time
+                </label>
+                <input
+                  id="event-end"
+                  type="time"
+                  className="dashboard-input"
+                  value={endTime}
+                  onChange={(e) => setEndTime(e.target.value)}
+                />
+              </div>
+            </div>
+
+            <div>
+              <button
+                type="button"
+                className="dashboard-button dashboard-button-green"
+                onClick={handleCreateEvent}
+              >
+                Create Google Calendar Event
+              </button>
+            </div>
+          </form>
+
+          <ul className="dashboard-appointments">
+            {Array.isArray(appointments) &&
+              appointments.map((a, i) => (
+                <li key={i} className="dashboard-appointment-item">
+                  <div>
+                    <span className="dashboard-appointment-name">{a.customer_name}</span> -{' '}
+                    {a.service}
+                  </div>
+                  <div>
+                    {a.start_time} to {a.end_time}
+                  </div>
+                </li>
+              ))}
+          </ul>
+        </div>
+      </div>
     </div>
   );
 };
