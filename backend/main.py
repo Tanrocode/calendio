@@ -1,16 +1,62 @@
-from fastapi import FastAPI
-from .routers import agent, dashboard
-from .database import Base, engine
+import os
+from pathlib import Path
 
-# Create all tables
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).resolve().parent / '.env')
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
+from starlette.middleware.sessions import SessionMiddleware
+
+# Register every model on Base.metadata before create_all (FK resolution order).
+from . import models  # noqa: F401
+from .database import Base, engine
+from .routers import auth, dashboard, log_agent
+
 Base.metadata.create_all(bind=engine)
+
+_secret = os.getenv('FLASK_SECRET_KEY')
+if not _secret:
+    raise RuntimeError(
+        "Set FLASK_SECRET_KEY in backend/.env (required for Google OAuth sessions)."
+    )
 
 app = FastAPI(title="Calendio API", version="0.1.0")
 
-# Routers
-app.include_router(agent.router)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        'http://127.0.0.1:3000',
+        'http://localhost:3000',
+    ],
+    allow_credentials=True,
+    allow_headers=['Content-Type', 'Authorization'],
+    allow_methods=['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+)
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=_secret,
+    same_site='lax',
+    https_only=False,
+)
+
 app.include_router(dashboard.router)
+app.include_router(log_agent.router)
+app.include_router(auth.router)
+
 
 @app.get("/")
 def root():
     return {"message": "Calendio API is running."}
+
+
+@app.get("/dashboard")
+def dashboard_is_on_the_frontend():
+    """
+    The React UI lives on port 3000, not on this API. Browsers that open
+    :8000/dashboard see this redirect instead of a raw 404 JSON.
+    """
+    front = os.getenv("FRONTEND_URL", "http://127.0.0.1:3000").rstrip("/")
+    return RedirectResponse(url=f"{front}/dashboard", status_code=307)

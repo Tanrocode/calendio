@@ -18,7 +18,8 @@ type Metrics = {
 };
 
 /** Same hostname as the page so session cookies work (localhost vs 127.0.0.1). */
-const API_BASE = `http://${window.location.hostname}:5001`;
+/** Same host as the page; port must match uvicorn (default 8000). */
+const API_BASE = `http://${window.location.hostname}:8000`;
 
 const Dashboard: React.FC = () => {
   const [metrics, setMetrics] = useState<Metrics>({ total_conversations: 0, total_appointments_created: 0 });

@@ -4,4 +4,7 @@ sqlalchemy
 psycopg2-binary
 pydantic
 langchain
+langchain-core
 python-dotenv
+google-auth-oauthlib
+google-api-python-client

@@ -1,7 +1,7 @@
-from langchain.schema import BaseOutputParser
+from langchain_core.output_parsers import BaseOutputParser
 from typing import Dict, Any
 
-from ..tools.calendar_tools import check_availability, create_appointment
+from .tools.calendar_tools import check_availability, create_appointment
 
 class SchedulingAgent:
     """

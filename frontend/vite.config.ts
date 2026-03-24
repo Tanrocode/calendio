@@ -6,6 +6,15 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 3000,
-    host: true, // listen on 0.0.0.0 so http://127.0.0.1:3000 works (needed for session cookies with Flask on 127.0.0.1)
+    host: true,
+    // Only proxy API paths — not `/dashboard` (React route) or you get a redirect loop
+    // with the backend 307 to the same URL.
+    proxy: {
+      '/dashboard/metrics': {
+        target: 'http://127.0.0.1:8000',
+        changeOrigin: true,
+      },
+      '/agent': { target: 'http://127.0.0.1:8000', changeOrigin: true },
+    },
   },
 })

@@ -1,23 +1,27 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from datetime import datetime
+from pydantic import BaseModel
 from ..database import get_db
-from ..schemas.conversation import ConversationCreate, Conversation
-from ..schemas.metric import Metric
 from ..agents.scheduling_agent import SchedulingAgent
 from ..models import conversation as conversation_model, metric as metric_model
 
 router = APIRouter()
 
+
+class AgentChatBody(BaseModel):
+    business_id: int
+    message: str
+
+
 @router.post("/agent/chat")
 def agent_chat(
-    business_id: int,
-    message: str,
-    db: Session = Depends(get_db)
+    body: AgentChatBody,
+    db: Session = Depends(get_db),
 ):
-    """
-    Runs the scheduling agent, logs the conversation, updates metrics, and returns the agent response.
-    """
+    """Run the scheduling agent, log the conversation, update metrics, return the agent reply."""
+    business_id = body.business_id
+    message = body.message
     agent = SchedulingAgent(db=db)
     agent_response = agent.run(business_id=business_id, message=message)
 
