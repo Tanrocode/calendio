@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import '../styles/Landing.css';
 
@@ -49,6 +49,7 @@ const Navbar: React.FC = () => (
             fontFamily,
         }}
     >
+        <Link to="/" style={{ textDecoration: 'none' }}>
         <div
             style={{
                 display: 'flex',
@@ -76,6 +77,7 @@ const Navbar: React.FC = () => (
             </svg>
             Calendio
         </div>
+        </Link>
         <NavButton to="/login">Try Now</NavButton>
     </nav>
 );

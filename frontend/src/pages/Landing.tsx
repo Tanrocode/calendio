@@ -74,7 +74,7 @@ const Hero: React.FC = () => (
 			and continue doing the work you love.
 		</p>
 		<div className="landing-hero-actions">
-			<HeroButton to="/login">Try Now →</HeroButton>
+			<HeroButton to="/auth">Try Now →</HeroButton>
 			<a
 				href="#features"
 				style={{

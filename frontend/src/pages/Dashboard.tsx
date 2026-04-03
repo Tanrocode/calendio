@@ -4,6 +4,7 @@ import { getMetrics } from '../services/api.ts';
 import MetricsCard from '../components/MetricsCard.tsx';
 import Navbar from '../components/NavBar.tsx';
 import '../styles/Dashboard.css';
+import { persistAppUserFromSession, supabase } from '../lib/supabaseClient';
 
 type Appointment = {
   customer_name: string;
@@ -33,15 +34,27 @@ const Dashboard: React.FC = () => {
   const [eventMessageType, setEventMessageType] = useState<'success' | 'error' | null>(null);
 
   useEffect(() => {
-    const user = JSON.parse(localStorage.getItem('user') || '{}');
-    if (!user.business_id) {
-      window.location.href = '/login';
-      return;
-    }
-    getMetrics(user.business_id).then((data) => {
-      setMetrics(data.metrics);
-      setAppointments(data.upcoming_appointments);
-    });
+    const run = async () => {
+      let user = JSON.parse(localStorage.getItem('user') || '{}') as {
+        business_id?: number;
+      };
+      if (!user.business_id) {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session) {
+          persistAppUserFromSession(session);
+          user = JSON.parse(localStorage.getItem('user') || '{}');
+        }
+      }
+      if (!user.business_id) {
+        window.location.href = '/auth';
+        return;
+      }
+      getMetrics(user.business_id).then((data) => {
+        setMetrics(data.metrics);
+        setAppointments(data.upcoming_appointments);
+      });
+    };
+    run();
   }, []);
 
   const handleConnectGoogle = async () => {
