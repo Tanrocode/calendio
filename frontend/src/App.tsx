@@ -6,6 +6,10 @@ import AuthCallback from './pages/AuthCallback';
 import Dashboard from './pages/Dashboard';
 import TestAgent from './pages/TestAgent';
 
+import { createClient } from '@supabase/supabase-js';
+
+const supabase = createClient(import.meta.env.VITE_SUPABASE_URL, import.meta.env.VITE_SUPABASE_PUBLISHABLE_DEFAULT_KEY);
+
 function App() {
   return (
     <Router>
@@ -14,7 +18,7 @@ function App() {
         <Route path="/auth" element={<AuthPage />} />
         <Route path="/login" element={<Navigate to="/auth" replace />} />
         <Route path="/signup" element={<Navigate to="/auth" replace />} />
-        <Route path="/auth/callback" element={<AuthCallback />} />
+        <Route path="/auth/v1/callback" element={<AuthCallback />} />
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/test/:token" element={<TestAgent />} />
         <Route path="*" element={<Navigate to="/" />} />

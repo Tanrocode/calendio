@@ -51,5 +51,5 @@ export function persistAppUserFromSession(session: Session): AppUser {
 
 /** Redirect after Google OAuth; must match Supabase Auth "Redirect URLs". */
 export function authCallbackUrl(): string {
-  return `${window.location.origin}/auth/callback`;
+  return `${window.location.origin}/auth/v1/callback`;
 }
