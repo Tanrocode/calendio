@@ -117,3 +117,6 @@ backend/agents/credentials.json
 
 # Ignore Copilot instructions (optional, remove if you want to track changes)
 .github/
+
+# Claude Code
+.claude/

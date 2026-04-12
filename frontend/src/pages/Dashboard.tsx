@@ -35,21 +35,13 @@ const Dashboard: React.FC = () => {
 
   useEffect(() => {
     const run = async () => {
-      let user = JSON.parse(localStorage.getItem('user') || '{}') as {
-        business_id?: number;
-      };
-      if (!user.business_id) {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (session) {
-          persistAppUserFromSession(session);
-          user = JSON.parse(localStorage.getItem('user') || '{}');
-        }
-      }
-      if (!user.business_id) {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
         window.location.href = '/auth';
         return;
       }
-      getMetrics(user.business_id).then((data) => {
+      persistAppUserFromSession(session);
+      getMetrics().then((data) => {
         setMetrics(data.metrics);
         setAppointments(data.upcoming_appointments);
       });
@@ -107,7 +99,7 @@ const Dashboard: React.FC = () => {
         // Optionally start the auth flow automatically:
         // await handleConnectGoogle();
         return;
-      }
+      }``
 
       let msg = 'Failed to create event.';
       if (error.response?.data?.error) {

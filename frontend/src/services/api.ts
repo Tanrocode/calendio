@@ -1,11 +1,20 @@
 import axios from 'axios';
+import { supabase } from '../lib/supabaseClient';
 
-export const getMetrics = async (businessId: number) => {
-  const res = await axios.get(`/dashboard/metrics/${businessId}`);
+async function getAuthHeaders(): Promise<{ Authorization: string }> {
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session) throw new Error('Not authenticated');
+  return { Authorization: `Bearer ${session.access_token}` };
+}
+
+export const getMetrics = async () => {
+  const headers = await getAuthHeaders();
+  const res = await axios.get('/dashboard/metrics', { headers });
   return res.data;
 };
 
 export const sendAgentMessage = async (businessId: number, message: string) => {
-  const res = await axios.post('/agent/chat', { business_id: businessId, message });
+  const headers = await getAuthHeaders();
+  const res = await axios.post('/agent/chat', { business_id: businessId, message }, { headers });
   return res.data;
 };

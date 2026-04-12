@@ -62,7 +62,6 @@ const HeroButton: React.FC<{ to: string; children: React.ReactNode }> = ({
 
 const Hero: React.FC = () => (
 	<section className="landing-hero">
-		<div className="landing-hero-badge">AI-Powered Scheduling</div>
 		<h1 className="landing-hero-title">
 			Agents for your{' '}
 			<span className="landing-hero-gradient">everyday voice</span>{' '}
