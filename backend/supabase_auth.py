@@ -1,18 +1,23 @@
+from dataclasses import dataclass
+
 from fastapi import Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy.orm import Session
 import jwt
 
 from .config import settings
-from .database import get_db
-from .models.user import User
-from .models.business import Business
+from .supabase_client import supabase
 
 _bearer = HTTPBearer()
 
 
+@dataclass
+class CurrentUser:
+    id: int
+    supabase_uid: str
+    email: str
+
+
 def _verify_jwt(credentials: HTTPAuthorizationCredentials = Depends(_bearer)) -> dict:
-    """Decode and verify a Supabase-issued JWT. Returns the full payload."""
     if not settings.SUPABASE_JWT_SECRET:
         raise HTTPException(status_code=500, detail="SUPABASE_JWT_SECRET not configured")
     try:
@@ -29,28 +34,17 @@ def _verify_jwt(credentials: HTTPAuthorizationCredentials = Depends(_bearer)) ->
         raise HTTPException(status_code=401, detail=f"Invalid token: {exc}")
 
 
-def get_current_user(
-    payload: dict = Depends(_verify_jwt),
-    db: Session = Depends(get_db),
-) -> User:
-    """
-    Resolve the JWT sub claim to a local User row.
-    Creates a Business + User automatically on first login.
-    """
+def get_current_user(payload: dict = Depends(_verify_jwt)) -> CurrentUser:
     supabase_uid: str = payload["sub"]
     email: str = payload.get("email", "")
 
-    user = db.query(User).filter_by(supabase_uid=supabase_uid).first()
-    if user:
-        return user
+    result = supabase.table("users").select("*").eq("supabase_uid", supabase_uid).execute()
 
-    # First login — provision a business and user row.
-    business = Business(name=email or "My Business")
-    db.add(business)
-    db.flush()
+    if result.data:
+        row = result.data[0]
+        return CurrentUser(id=row["id"], supabase_uid=row["supabase_uid"], email=row["email"])
 
-    user = User(supabase_uid=supabase_uid, email=email, business_id=business.id)
-    db.add(user)
-    db.commit()
-    db.refresh(user)
-    return user
+    # First login — create user row
+    insert = supabase.table("users").insert({"supabase_uid": supabase_uid, "email": email}).execute()
+    row = insert.data[0]
+    return CurrentUser(id=row["id"], supabase_uid=row["supabase_uid"], email=row["email"])

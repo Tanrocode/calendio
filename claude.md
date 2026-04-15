@@ -119,8 +119,8 @@ Browser mic → WebSocket → FastAPI → STT → LangChain agent → TTS → We
 ## Key Design Decisions
 
 - **No session cookies for user auth.** Frontend sends Supabase JWT as Bearer token; FastAPI validates via Supabase JWKS. `SessionMiddleware` is only for per-business Google Calendar OAuth tokens — not user auth.
-- **Per-business Google Calendar OAuth.** Each business connects their own calendar; tokens stored in DB and injected via context vars at request time.
-- **SQLAlchemy + Supabase Postgres.** SQLAlchemy ORM for all DB queries; Supabase is the Postgres host. Don't use the Supabase Python client for queries.
+- **Per-user Google Calendar OAuth.** Each user connects their own calendar; tokens stored in DB and injected via context vars at request time.
+- **Supabase Python client for all data.** All DB queries use `supabase-py` (`supabase.table(...).select/insert/update/delete`). SQLAlchemy is not used. FastAPI routes act as the middleware layer — the frontend never calls Supabase directly. No businesses table — everything links directly to `users`.
 - **Naive datetimes in DB.** `start_time`/`end_time` stored as naive UTC. Timezone conversion happens at the API layer via `zoneinfo`.
 
 ---

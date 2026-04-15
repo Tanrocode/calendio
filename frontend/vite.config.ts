@@ -10,11 +10,10 @@ export default defineConfig({
     // Only proxy API paths — not `/dashboard` (React route) or you get a redirect loop
     // with the backend 307 to the same URL.
     proxy: {
-      '/dashboard/metrics': {
-        target: 'http://127.0.0.1:8000',
-        changeOrigin: true,
-      },
+      '/dashboard': { target: 'http://127.0.0.1:8000', changeOrigin: true },
+      '/agents': { target: 'http://127.0.0.1:8000', changeOrigin: true },
       '/agent': { target: 'http://127.0.0.1:8000', changeOrigin: true },
+      '/auth/url': { target: 'http://127.0.0.1:8000', changeOrigin: true },
     },
   },
 })

@@ -10,12 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 from starlette.middleware.sessions import SessionMiddleware
 
-# Register every model on Base.metadata before create_all (FK resolution order).
-from . import models  # noqa: F401
-from .database import Base, engine
-from .routers import auth, dashboard, log_agent
-
-Base.metadata.create_all(bind=engine)
+from .routers import auth, dashboard, log_agent, agent_config
 
 _secret = os.getenv('FLASK_SECRET_KEY')
 if not _secret:
@@ -45,6 +40,7 @@ app.add_middleware(
 app.include_router(dashboard.router)
 app.include_router(log_agent.router)
 app.include_router(auth.router)
+app.include_router(agent_config.router)
 
 
 @app.get("/")
@@ -53,10 +49,6 @@ def root():
 
 
 @app.get("/dashboard")
-def dashboard_is_on_the_frontend():
-    """
-    The React UI lives on port 3000, not on this API. Browsers that open
-    :8000/dashboard see this redirect instead of a raw 404 JSON.
-    """
+def dashboard_redirect():
     front = os.getenv("FRONTEND_URL", "http://127.0.0.1:3000").rstrip("/")
     return RedirectResponse(url=f"{front}/dashboard", status_code=307)

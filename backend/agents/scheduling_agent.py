@@ -12,8 +12,7 @@ from google.oauth2.credentials import Credentials
 from langchain_core.output_parsers import BaseOutputParser
 from langchain.tools import tool
 
-from ..models.appointment import Appointment
-from ..models.business import Business
+from ..supabase_client import supabase
 
 
 _OAUTH_SESSION_CTX: ContextVar[Optional[Dict[str, Optional[str]]]] = ContextVar(
@@ -72,11 +71,11 @@ class SchedulingAgent:
     events.
     """
 
-    def __init__(self, db):
-        self.db = db
+    def __init__(self):
         # TODO: Initialize LangChain LLM, tools, etc.
+        pass
 
-    def run(self, business_id: int, message: str, request: Request) -> Dict[str, Any]:
+    def run(self, user_id: int, message: str, request: Request) -> Dict[str, Any]:
         intent = "BOOK" if "book" in message.lower() else "UNKNOWN"
         slots = (
             {"date": "2026-03-03", "time": "10:00", "service": "Consultation"}
@@ -88,9 +87,8 @@ class SchedulingAgent:
         appointment_google_id: Optional[str] = None
 
         if intent == "BOOK":
-            business = self.db.query(Business).filter_by(id=business_id).first()
-            timezone = business.timezone if business and business.timezone else "America/Los_Angeles"
-            calendar_id = business.google_calendar_id if business and business.google_calendar_id else "primary"
+            timezone = "America/Los_Angeles"
+            calendar_id = "primary"
 
             if "token" not in request.session:
                 return {
@@ -110,17 +108,17 @@ class SchedulingAgent:
                 {"calendar_id": calendar_id, "timezone": timezone}
             )
             try:
-                start_naive = datetime.fromisoformat(f"{slots['date']}T{slots['time']}")
+                start_naive = datetime.fromisoformat(f"{slots["date"]}T={slots["time"]}")
                 start_dt = start_naive.replace(tzinfo=ZoneInfo(timezone))
                 end_dt = start_dt + timedelta(hours=1)
 
                 start_iso = start_dt.isoformat()
                 end_iso = end_dt.isoformat()
 
-                available = check_availability(business_id, start_iso, end_iso)
+                available = check_availability(user_id, start_iso, end_iso)
                 if available:
                     created = create_appointment(
-                        business_id,
+                        user_id,
                         {
                             "service": slots["service"],
                             "start": start_iso,
@@ -132,23 +130,17 @@ class SchedulingAgent:
                     appointment_created = True
                     appointment_google_id = created.get("google_event_id")
 
-                    # Persist appointment so the dashboard can show it.
-                    # Store naive datetimes to match the existing DateTime columns.
-                    start_store = _parse_datetime_in_tz(start_iso, timezone).replace(tzinfo=None)
-                    end_store = _parse_datetime_in_tz(end_iso, timezone).replace(tzinfo=None)
-
-                    appt = Appointment(
-                        business_id=business_id,
-                        customer_name=slots.get("customer_name", "Client"),
-                        service=slots["service"],
-                        start_time=start_store,
-                        end_time=end_store,
-                        google_event_id=appointment_google_id,
-                    )
-                    self.db.add(appt)
+                    supabase.table("appointments").insert({
+                        "user_id": user_id,
+                        "customer_name": slots.get("customer_name", "Client"),
+                        "service": slots["service"],
+                        "start_time": _parse_datetime_in_tz(start_iso, timezone).replace(tzinfo=None).isoformat(),
+                        "end_time": _parse_datetime_in_tz(end_iso, timezone).replace(tzinfo=None).isoformat(),
+                        "google_event_id": appointment_google_id,
+                    }).execute()
 
                 reply = (
-                    f"Appointment booked for {slots['service']} on {slots['date']} at {slots['time']}."
+                    f"Appointment booked for {slots["service"]} on {slots["date"]} at {slots["time"]}."
                     if appointment_created
                     else "Sorry, that time isn’t available. Try a different slot."
                 )
@@ -156,7 +148,7 @@ class SchedulingAgent:
                 _OAUTH_SESSION_CTX.reset(oauth_token_token)
                 _BUSINESS_CTX.reset(business_token)
         else:
-            reply = "Sorry, I couldn't understand your request."
+            reply = "Sorry, I couldn’t understand your request."
 
         return {
             "reply": reply,

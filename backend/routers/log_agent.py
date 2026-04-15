@@ -1,16 +1,16 @@
-from fastapi import APIRouter, Depends, Request
-from sqlalchemy.orm import Session
 from datetime import datetime
+
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
-from ..database import get_db
+
 from ..agents.scheduling_agent import SchedulingAgent
-from ..models import conversation as conversation_model, metric as metric_model
+from ..supabase_auth import CurrentUser, get_current_user
+from ..supabase_client import supabase
 
 router = APIRouter()
 
 
 class AgentChatBody(BaseModel):
-    business_id: int
     message: str
 
 
@@ -18,38 +18,34 @@ class AgentChatBody(BaseModel):
 def agent_chat(
     body: AgentChatBody,
     request: Request,
-    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
-    """Run the scheduling agent, log the conversation, update metrics, return the agent reply."""
-    business_id = body.business_id
-    message = body.message
-    agent = SchedulingAgent(db=db)
-    agent_response = agent.run(business_id=business_id, message=message, request=request)
+    agent = SchedulingAgent()
+    agent_response = agent.run(user_id=current_user.id, message=body.message, request=request)
 
     # Log conversation
-    conv = conversation_model.Conversation(
-        business_id=business_id,
-        message=message,
-        response=agent_response["reply"],
-        timestamp=datetime.utcnow()
-    )
-    db.add(conv)
-    db.commit()
+    supabase.table("conversations").insert({
+        "user_id": current_user.id,
+        "message": body.message,
+        "response": agent_response["reply"],
+        "timestamp": datetime.utcnow().isoformat(),
+    }).execute()
 
-    # Update metrics
+    # Upsert metrics
+    metric_result = supabase.table("metrics").select("*").eq("user_id", current_user.id).execute()
     appointment_created = bool(agent_response.get("appointment_created"))
-    metric = db.query(metric_model.Metric).filter_by(business_id=business_id).first()
-    if not metric:
-        metric = metric_model.Metric(
-            business_id=business_id,
-            total_conversations=1,
-            total_appointments_created=1 if appointment_created else 0,
-        )
-        db.add(metric)
+
+    if metric_result.data:
+        metric = metric_result.data[0]
+        supabase.table("metrics").update({
+            "total_conversations": metric["total_conversations"] + 1,
+            "total_appointments_created": metric["total_appointments_created"] + (1 if appointment_created else 0),
+        }).eq("user_id", current_user.id).execute()
     else:
-        metric.total_conversations += 1
-        if appointment_created:
-            metric.total_appointments_created += 1
-    db.commit()
+        supabase.table("metrics").insert({
+            "user_id": current_user.id,
+            "total_conversations": 1,
+            "total_appointments_created": 1 if appointment_created else 0,
+        }).execute()
 
     return agent_response
