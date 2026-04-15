@@ -2,17 +2,21 @@ from __future__ import annotations
 
 import os
 from contextvars import ContextVar
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any, Dict, Optional
 from zoneinfo import ZoneInfo
 
 from fastapi import Request
 from googleapiclient.discovery import build
 from google.oauth2.credentials import Credentials
-from langchain_core.output_parsers import BaseOutputParser
+from langchain.agents import AgentExecutor, create_openai_tools_agent
 from langchain.tools import tool
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_openai import ChatOpenAI
 
+from ..config import settings
 from ..supabase_client import supabase
+from ..routers.agent_config import AgentCreate
 
 
 _OAUTH_SESSION_CTX: ContextVar[Optional[Dict[str, Optional[str]]]] = ContextVar(
@@ -24,10 +28,6 @@ _BUSINESS_CTX: ContextVar[Optional[Dict[str, Optional[str]]]] = ContextVar(
 
 
 def _parse_datetime_in_tz(dt_str: str, timezone: str) -> datetime:
-    """
-    Parse ISO datetime strings and attach timezone if naive.
-    Returns an aware datetime.
-    """
     dt = datetime.fromisoformat(dt_str)
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=ZoneInfo(timezone))
@@ -63,117 +63,62 @@ def _get_credentials() -> Credentials:
 
 
 class SchedulingAgent:
-    """
-    LangChain-based scheduling agent for Calendio.
+    def __init__(self, config: AgentCreate):
+        self.config = config
+        self.llm = ChatOpenAI(
+            model="gpt-4o-mini",
+            api_key=settings.OPENAI_API_KEY,
+        )
+        self.tools = [check_availability, create_appointment]
 
-    This agent is currently a lightweight intent/slot runner that calls the
-    calendar tools (Google Calendar API) to check availability and create
-    events.
-    """
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", self.build_system_prompt()),
+            MessagesPlaceholder("chat_history", optional=True),
+            ("human", "{input}"),
+            MessagesPlaceholder("agent_scratchpad"),
+        ])
 
-    def __init__(self):
-        # TODO: Initialize LangChain LLM, tools, etc.
-        pass
+        agent = create_openai_tools_agent(self.llm, self.tools, prompt)
+        self.executor = AgentExecutor(agent=agent, tools=self.tools)
+
+    def build_system_prompt(self) -> str:
+        parts = [f"You are an assistant for {self.config.name}."]
+        if self.config.services:
+            parts.append(f"Services offered: {self.config.services}.")
+        if self.config.business_hours:
+            parts.append(f"Business hours: {self.config.business_hours}.")
+        if self.config.agent_instructions:
+            parts.append(f"Instructions from business: {self.config.agent_instructions}")
+        parts.append(
+            "Help callers book appointments and answer questions about the business. "
+            "Only book appointments for services the business offers and within business hours."
+        )
+        return " ".join(parts)
 
     def run(self, user_id: int, message: str, request: Request) -> Dict[str, Any]:
-        intent = "BOOK" if "book" in message.lower() else "UNKNOWN"
-        slots = (
-            {"date": "2026-03-03", "time": "10:00", "service": "Consultation"}
-            if intent == "BOOK"
-            else {}
-        )
+        if "token" not in request.session:
+            return {"reply": "Connect your Google Calendar first, then book an appointment."}
 
-        appointment_created = False
-        appointment_google_id: Optional[str] = None
+        oauth_token_tok = _OAUTH_SESSION_CTX.set({
+            "token": request.session.get("token"),
+            "refresh_token": request.session.get("refresh_token"),
+        })
+        business_tok = _BUSINESS_CTX.set({
+            "calendar_id": "primary",
+            "timezone": "America/Los_Angeles",
+        })
 
-        if intent == "BOOK":
-            timezone = "America/Los_Angeles"
-            calendar_id = "primary"
-
-            if "token" not in request.session:
-                return {
-                    "reply": "Connect your Google Calendar first, then book an appointment.",
-                    "intent": intent,
-                    "slots": slots,
-                    "appointment_created": False,
-                }
-
-            oauth_token = request.session.get("token")
-            refresh_token = request.session.get("refresh_token")
-
-            oauth_token_token = _OAUTH_SESSION_CTX.set(
-                {"token": oauth_token, "refresh_token": refresh_token}
-            )
-            business_token = _BUSINESS_CTX.set(
-                {"calendar_id": calendar_id, "timezone": timezone}
-            )
-            try:
-                start_naive = datetime.fromisoformat(f"{slots["date"]}T={slots["time"]}")
-                start_dt = start_naive.replace(tzinfo=ZoneInfo(timezone))
-                end_dt = start_dt + timedelta(hours=1)
-
-                start_iso = start_dt.isoformat()
-                end_iso = end_dt.isoformat()
-
-                available = check_availability(user_id, start_iso, end_iso)
-                if available:
-                    created = create_appointment(
-                        user_id,
-                        {
-                            "service": slots["service"],
-                            "start": start_iso,
-                            "end": end_iso,
-                            "description": slots.get("description", ""),
-                            "customer_name": slots.get("customer_name", "Client"),
-                        },
-                    )
-                    appointment_created = True
-                    appointment_google_id = created.get("google_event_id")
-
-                    supabase.table("appointments").insert({
-                        "user_id": user_id,
-                        "customer_name": slots.get("customer_name", "Client"),
-                        "service": slots["service"],
-                        "start_time": _parse_datetime_in_tz(start_iso, timezone).replace(tzinfo=None).isoformat(),
-                        "end_time": _parse_datetime_in_tz(end_iso, timezone).replace(tzinfo=None).isoformat(),
-                        "google_event_id": appointment_google_id,
-                    }).execute()
-
-                reply = (
-                    f"Appointment booked for {slots["service"]} on {slots["date"]} at {slots["time"]}."
-                    if appointment_created
-                    else "Sorry, that time isn’t available. Try a different slot."
-                )
-            finally:
-                _OAUTH_SESSION_CTX.reset(oauth_token_token)
-                _BUSINESS_CTX.reset(business_token)
-        else:
-            reply = "Sorry, I couldn’t understand your request."
-
-        return {
-            "reply": reply,
-            "intent": intent,
-            "slots": slots,
-            "appointment_created": appointment_created,
-            "google_event_id": appointment_google_id,
-        }
-
-
-class AgentOutputParser(BaseOutputParser):
-    """Parses agent output to structured JSON."""
-
-    def parse(self, text: str) -> Dict[str, Any]:
-        # TODO: Implement structured output parsing
-        return {}
+        try:
+            result = self.executor.invoke({"input": message})
+            return {"reply": result["output"]}
+        finally:
+            _OAUTH_SESSION_CTX.reset(oauth_token_tok)
+            _BUSINESS_CTX.reset(business_tok)
 
 
 @tool
 def check_availability(business_id: int, start_datetime: str, end_datetime: str) -> bool:
-    """Check if the requested time range is free on the business's Google Calendar.
-
-    Notes:
-    - OAuth credentials are read from the current FastAPI request session via context.
-    """
+    """Check if the requested time range is free on the business's Google Calendar."""
     calendar_id, timezone = _get_calendar_id_and_timezone()
     creds = _get_credentials()
 
@@ -181,17 +126,14 @@ def check_availability(business_id: int, start_datetime: str, end_datetime: str)
     end_dt = _parse_datetime_in_tz(end_datetime, timezone)
 
     service = build("calendar", "v3", credentials=creds)
-
     result = (
         service.freebusy()
-        .query(
-            body={
-                "timeMin": start_dt.isoformat(),
-                "timeMax": end_dt.isoformat(),
-                "timeZone": timezone,
-                "items": [{"id": calendar_id}],
-            }
-        )
+        .query(body={
+            "timeMin": start_dt.isoformat(),
+            "timeMax": end_dt.isoformat(),
+            "timeZone": timezone,
+            "items": [{"id": calendar_id}],
+        })
         .execute()
     )
 
@@ -203,12 +145,7 @@ def check_availability(business_id: int, start_datetime: str, end_datetime: str)
 
 @tool
 def create_appointment(business_id: int, slots: Dict[str, Any]) -> Dict[str, Any]:
-    """Create a calendar event for the given appointment slots.
-
-    Notes:
-    - OAuth credentials are read from the current FastAPI request session via context.
-    - Expected `slots` keys: `service`, `start`, `end`, `description` (optional).
-    """
+    """Create a calendar event. Expected slots keys: service, start, end, description (optional), customer_name (optional)."""
     calendar_id, timezone = _get_calendar_id_and_timezone()
     creds = _get_credentials()
 
@@ -216,7 +153,6 @@ def create_appointment(business_id: int, slots: Dict[str, Any]) -> Dict[str, Any
     end_dt = _parse_datetime_in_tz(str(slots["end"]), timezone)
 
     service = build("calendar", "v3", credentials=creds)
-
     event = {
         "summary": slots.get("service") or "Appointment",
         "description": slots.get("description") or "",
@@ -225,8 +161,18 @@ def create_appointment(business_id: int, slots: Dict[str, Any]) -> Dict[str, Any
     }
 
     created_event = service.events().insert(calendarId=calendar_id, body=event).execute()
+    google_event_id = created_event.get("id")
+
+    supabase.table("appointments").insert({
+        "user_id": business_id,
+        "customer_name": slots.get("customer_name", "Client"),
+        "service": slots.get("service", ""),
+        "start_time": start_dt.replace(tzinfo=None).isoformat(),
+        "end_time": end_dt.replace(tzinfo=None).isoformat(),
+        "google_event_id": google_event_id,
+    }).execute()
+
     return {
-        "google_event_id": created_event.get("id"),
+        "google_event_id": google_event_id,
         "google_event_link": created_event.get("htmlLink"),
     }
-
