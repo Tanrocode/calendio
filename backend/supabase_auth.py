@@ -2,9 +2,7 @@ from dataclasses import dataclass
 
 from fastapi import Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-import jwt
 
-from .config import settings
 from .supabase_client import supabase
 
 _bearer = HTTPBearer()
@@ -18,19 +16,14 @@ class CurrentUser:
 
 
 def _verify_jwt(credentials: HTTPAuthorizationCredentials = Depends(_bearer)) -> dict:
-    if not settings.SUPABASE_JWT_SECRET:
-        raise HTTPException(status_code=500, detail="SUPABASE_JWT_SECRET not configured")
     try:
-        payload = jwt.decode(
-            credentials.credentials,
-            settings.SUPABASE_JWT_SECRET,
-            algorithms=["HS256"],
-            audience="authenticated",
-        )
-        return payload
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="Token expired")
-    except jwt.InvalidTokenError as exc:
+        response = supabase.auth.get_user(credentials.credentials)
+        if not response.user:
+            raise HTTPException(status_code=401, detail="Not authenticated")
+        return {"sub": response.user.id, "email": response.user.email or ""}
+    except HTTPException:
+        raise
+    except Exception as exc:
         raise HTTPException(status_code=401, detail=f"Invalid token: {exc}")
 
 
