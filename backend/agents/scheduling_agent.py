@@ -9,9 +9,8 @@ from zoneinfo import ZoneInfo
 from fastapi import Request
 from googleapiclient.discovery import build
 from google.oauth2.credentials import Credentials
-from langchain.agents import AgentExecutor, create_openai_tools_agent
+from langchain.agents import create_agent
 from langchain.tools import tool
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_openai import ChatOpenAI
 
 from ..config import settings
@@ -65,21 +64,12 @@ def _get_credentials() -> Credentials:
 class SchedulingAgent:
     def __init__(self, config: AgentCreate):
         self.config = config
-        self.llm = ChatOpenAI(
-            model="gpt-4o-mini",
-            api_key=settings.OPENAI_API_KEY,
-        )
         self.tools = [check_availability, create_appointment]
-
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", self.build_system_prompt()),
-            MessagesPlaceholder("chat_history", optional=True),
-            ("human", "{input}"),
-            MessagesPlaceholder("agent_scratchpad"),
-        ])
-
-        agent = create_openai_tools_agent(self.llm, self.tools, prompt)
-        self.executor = AgentExecutor(agent=agent, tools=self.tools)
+        self.agent = create_agent(
+            model=ChatOpenAI(model="gpt-4o-mini", api_key=settings.OPENAI_API_KEY),
+            tools=self.tools,
+            system_prompt=self.build_system_prompt(),
+        )
 
     def build_system_prompt(self) -> str:
         parts = [f"You are an assistant for {self.config.name}."]
@@ -109,8 +99,9 @@ class SchedulingAgent:
         })
 
         try:
-            result = self.executor.invoke({"input": message})
-            return {"reply": result["output"]}
+            result = self.agent.invoke({"messages": [{"role": "user", "content": message}]})
+            reply = result["messages"][-1].content
+            return {"reply": reply}
         finally:
             _OAUTH_SESSION_CTX.reset(oauth_token_tok)
             _BUSINESS_CTX.reset(business_tok)

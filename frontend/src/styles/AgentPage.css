@@ -1,0 +1,183 @@
+/* ── Base ─────────────────────────────────────────────── */
+.agent-page {
+  font-family: 'Inter', 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
+  background: #f8fafc;
+  min-height: 100vh;
+}
+
+.agent-page-shell {
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 40px 32px 80px;
+  position: relative;
+}
+
+.agent-page-loading {
+  color: #94a3b8;
+  font-size: 15px;
+  margin-top: 40px;
+}
+
+/* ── Back button ─────────────────────────────────────── */
+.agent-page-back {
+  background: none;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #64748b;
+  cursor: pointer;
+  padding: 6px 14px;
+  font-family: inherit;
+  position: absolute;
+  top: 20px;
+  right: 32px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  transition: color 0.15s, background 0.15s;
+  letter-spacing: 0.1px;
+  background: #fff;
+}
+
+.agent-page-back:hover {
+  background: #f1f5f9;
+  color: #0f172a;
+}
+
+/* ── Header ──────────────────────────────────────────── */
+.agent-page-header {
+  margin-bottom: 28px;
+  padding-bottom: 28px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.agent-page-title-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+
+.agent-page-name {
+  font-size: 28px;
+  font-weight: 800;
+  color: #0f172a;
+  margin: 0;
+  letter-spacing: -0.5px;
+}
+
+.agent-page-created {
+  font-size: 13px;
+  color: #94a3b8;
+  margin: 4px 0 0 0;
+  text-align: left;
+}
+
+/* ── Status badge ────────────────────────────────────── */
+.agent-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.agent-status-badge.active {
+  background: #dcfce7;
+  color: #16a34a;
+}
+
+.agent-status-badge.inactive {
+  background: #f1f5f9;
+  color: #64748b;
+}
+
+.agent-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+/* ── Info cards ──────────────────────────────────────── */
+.agent-info-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 40px;
+}
+
+.agent-info-card {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 18px 20px;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+}
+
+.agent-info-card--full {
+  grid-column: 1 / -1;
+}
+
+.agent-info-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.7px;
+  color: #94a3b8;
+  margin: 0 0 8px 0;
+}
+
+.agent-info-value {
+  font-size: 14px;
+  color: #334155;
+  margin: 0;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+/* ── CTA ─────────────────────────────────────────────── */
+.agent-page-cta {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.agent-talk-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 13px 28px;
+  background: #0f172a;
+  color: #fff;
+  border: none;
+  border-radius: 12px;
+  font-size: 15px;
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.15s, transform 0.1s;
+}
+
+.agent-talk-btn:hover {
+  background: #1e293b;
+  transform: translateY(-1px);
+}
+
+.agent-talk-btn:active {
+  transform: translateY(0);
+}
+
+.agent-talk-icon {
+  font-size: 16px;
+}
+
+.agent-talk-hint {
+  font-size: 13px;
+  color: #94a3b8;
+  margin: 0;
+}
