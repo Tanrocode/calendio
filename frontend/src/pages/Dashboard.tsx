@@ -28,9 +28,9 @@ const Dashboard: React.FC = () => {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) { window.location.href = '/auth'; return; }
       persistAppUserFromSession(session);
-      const [metricsData, agentsData] = await Promise.all([getMetrics(), getAgents()]);
-      setMetrics(metricsData.metrics);
-      setAgents(agentsData);
+      const [metricsResult, agentsResult] = await Promise.allSettled([getMetrics(), getAgents()]);
+      if (metricsResult.status === 'fulfilled') setMetrics(metricsResult.value.metrics);
+      if (agentsResult.status === 'fulfilled') setAgents(agentsResult.value);
     };
     init();
   }, []);

@@ -1,4 +1,5 @@
 import React from 'react';
+import { useNavigate } from 'react-router-dom';
 import type { AgentConfig } from '../services/api';
 
 type Props = {
@@ -7,6 +8,8 @@ type Props = {
 };
 
 const AgentCard: React.FC<Props> = ({ agent, onDelete }) => {
+  const navigate = useNavigate();
+
   const date = agent.created_at
     ? new Date(agent.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
     : null;
@@ -18,12 +21,12 @@ const AgentCard: React.FC<Props> = ({ agent, onDelete }) => {
     : null;
 
   return (
-    <div className="agent-card">
+    <div className="agent-card" onClick={() => navigate(`/agent/${agent.id}`)} style={{ cursor: 'pointer' }}>
       <div className="agent-card-header">
         <div className="agent-card-dot" />
         <button
           className="agent-card-delete"
-          onClick={() => onDelete(agent.id)}
+          onClick={e => { e.stopPropagation(); onDelete(agent.id); }}
           title="Delete agent"
           aria-label="Delete agent"
         >
