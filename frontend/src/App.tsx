@@ -4,6 +4,7 @@ import Landing from './pages/Landing';
 import AuthPage from './pages/AuthPage';
 import AuthCallback from './pages/AuthCallback';
 import Dashboard from './pages/Dashboard';
+import VoiceAgent from './pages/VoiceAgent';
 import TestAgent from './pages/TestAgent';
 import ProtectedRoute from './components/ProtectedRoute';
 
@@ -19,6 +20,7 @@ function App() {
 
         <Route element={<ProtectedRoute />}>
           <Route path="/dashboard" element={<Dashboard />} />
+          <Route path="/voice" element={<VoiceAgent />} />
           <Route path="/test/:token" element={<TestAgent />} />
         </Route>
 

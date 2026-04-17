@@ -1,9 +1,4 @@
-#root {
-  max-width: 1280px;
-  margin: 0 auto;
-  padding: 2rem;
-  text-align: center;
-}
+/* Layout lives in pages; keep #root full-width (see src/index.css). */
 
 .logo {
   height: 6em;

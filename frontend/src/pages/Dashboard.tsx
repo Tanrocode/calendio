@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { getMetrics, getAgents, createAgent, deleteAgent } from '../services/api';
 import type { AgentConfig } from '../services/api';
 import MetricsCard from '../components/MetricsCard';
@@ -66,6 +67,15 @@ const Dashboard: React.FC = () => {
       <div className="dashboard-shell">
 
         <MetricsCard metrics={metrics} />
+
+        <p style={{ margin: '12px 0 0', fontSize: 15 }}>
+          <Link to="/voice" style={{ color: '#2563eb', fontWeight: 600 }}>
+            Voice and agent demo
+          </Link>
+          <span style={{ color: '#64748b', marginLeft: 8 }}>
+            — speak or type, then hear the reply
+          </span>
+        </p>
 
         <div className="agents-section">
           <h2 className="agents-title">Your Agents</h2>
