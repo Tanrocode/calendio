@@ -6,7 +6,10 @@ type Message = {
   text: string;
 };
 
-const ChatWindow: React.FC<{ businessId: number; token: string }> = ({ businessId }) => {
+const ChatWindow: React.FC<{ businessId: number; token: string }> = ({
+  businessId: _businessId,
+  token: _token,
+}) => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -15,8 +18,8 @@ const ChatWindow: React.FC<{ businessId: number; token: string }> = ({ businessI
     if (!input.trim()) return;
     setMessages((msgs) => [...msgs, { sender: 'user', text: input }]);
     setLoading(true);
-    const res = await sendAgentMessage(businessId, input);
-    setMessages((msgs) => [...msgs, { sender: 'user', text: input }, { sender: 'agent', text: res.reply }]);
+    const res = await sendAgentMessage(input);
+    setMessages((msgs) => [...msgs, { sender: 'agent', text: res.reply }]);
     setInput('');
     setLoading(false);
   };
