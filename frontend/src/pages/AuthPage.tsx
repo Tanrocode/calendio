@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Link } from 'react-router-dom';
+import React, { useEffect, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import Navbar from '../components/NavBar';
 import { authCallbackUrl, supabase } from '../lib/supabaseClient';
 
@@ -17,8 +17,15 @@ function GoogleIcon() {
 }
 
 const AuthPage: React.FC = () => {
+  const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session) navigate('/dashboard', { replace: true });
+    });
+  }, [navigate]);
 
   const handleGoogle = async () => {
     setError(null);
