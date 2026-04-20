@@ -1,6 +1,7 @@
 from pathlib import Path
+from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
@@ -70,11 +71,22 @@ def _build_credentials(request: Request) -> Credentials:
     )
 
 
+def _safe_oauth_next_path(next: Optional[str]) -> str:
+    """Where to send the browser after Google OAuth (path on frontend only)."""
+    if not next or not isinstance(next, str):
+        return "/dashboard"
+    n = next.strip().split("?")[0]
+    if not n.startswith("/") or n.startswith("//"):
+        return "/dashboard"
+    return n[:128]
+
+
 @router.get('/auth/url')
-def auth_url(request: Request):
+def auth_url(request: Request, next: Optional[str] = Query(None)):
     redirect_uri, frontend = _redirect_uri_and_frontend_for_request(request)
     request.session['oauth_redirect_uri'] = redirect_uri
     request.session['frontend_origin'] = frontend
+    request.session['oauth_next_path'] = _safe_oauth_next_path(next)
     flow = get_flow(redirect_uri)
     url, state = flow.authorization_url(access_type='offline')
     request.session['state'] = state
@@ -98,7 +110,9 @@ def callback(request: Request):
         request.session['token'] = credentials.token
         request.session['refresh_token'] = credentials.refresh_token
         front = request.session.get('frontend_origin') or FRONTEND_URL.rstrip('/')
-        return RedirectResponse(url=f'{front}/dashboard')
+        next_path = request.session.pop('oauth_next_path', None) or '/dashboard'
+        next_path = _safe_oauth_next_path(next_path)
+        return RedirectResponse(url=f'{front}{next_path}')
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

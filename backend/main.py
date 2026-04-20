@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 from starlette.middleware.sessions import SessionMiddleware
 
-from .routers import auth, dashboard, log_agent, agent_config
+from .routers import auth, calendar_demo, dashboard, log_agent, agent_config
 
 _secret = os.getenv('FLASK_SECRET_KEY')
 if not _secret:
@@ -28,7 +28,7 @@ app.add_middleware(
     ],
     allow_credentials=True,
     allow_headers=['Content-Type', 'Authorization'],
-    allow_methods=['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allow_methods=['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
 )
 app.add_middleware(
     SessionMiddleware,
@@ -40,6 +40,7 @@ app.add_middleware(
 app.include_router(dashboard.router)
 app.include_router(log_agent.router)
 app.include_router(auth.router)
+app.include_router(calendar_demo.router)
 app.include_router(agent_config.router)
 
 

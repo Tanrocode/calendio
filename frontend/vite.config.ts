@@ -14,6 +14,9 @@ export default defineConfig({
       '/dashboard/metrics': { target: 'http://127.0.0.1:8000', changeOrigin: true },
       '/agents': { target: 'http://127.0.0.1:8000', changeOrigin: true },
       '/auth/url': { target: 'http://127.0.0.1:8000', changeOrigin: true },
+      '/oauth': { target: 'http://127.0.0.1:8000', changeOrigin: true },
+      '/calendar-demo': { target: 'http://127.0.0.1:8000', changeOrigin: true },
+      '/add-event': { target: 'http://127.0.0.1:8000', changeOrigin: true },
     },
   },
 })
