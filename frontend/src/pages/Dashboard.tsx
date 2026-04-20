@@ -76,6 +76,14 @@ const Dashboard: React.FC = () => {
             — speak or type, then hear the reply
           </span>
         </p>
+        <p style={{ margin: '8px 0 0', fontSize: 15 }}>
+          <Link to="/calendar-demo" style={{ color: '#2563eb', fontWeight: 600 }}>
+            Google Calendar demo
+          </Link>
+          <span style={{ color: '#64748b', marginLeft: 8 }}>
+            — list, search, create, delete, reschedule (connect Google first)
+          </span>
+        </p>
 
         <div className="agents-section">
           <h2 className="agents-title">Your Agents</h2>

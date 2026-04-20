@@ -3,21 +3,21 @@ from __future__ import annotations
 import os
 from contextvars import ContextVar
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 from zoneinfo import ZoneInfo
 
 from fastapi import Request
 from googleapiclient.discovery import build
 from google.oauth2.credentials import Credentials
-from langchain.agents import create_agent
 from langchain.tools import tool
-from langchain_openai import ChatOpenAI
 
 from ..config import settings
 from ..supabase_client import supabase
 from ..routers.agent_config import AgentCreate
 
 
+# Per-request Google OAuth tokens and calendar metadata. Set in SchedulingAgent.run
+# so every @tool call in the same request sees the same creds without threading globals.
 _OAUTH_SESSION_CTX: ContextVar[Optional[Dict[str, Optional[str]]]] = ContextVar(
     "_OAUTH_SESSION_CTX", default=None
 )
@@ -42,6 +42,16 @@ def _get_calendar_id_and_timezone() -> tuple[str, str]:
     return calendar_id, timezone
 
 
+def _event_start_end_strings(ev: Dict[str, Any]) -> tuple[str, str]:
+    """Human-readable start/end from a Calendar API event body."""
+    # Google returns either dateTime (timed events) or date (all-day). We support both.
+    start = ev.get("start") or {}
+    end = ev.get("end") or {}
+    s = start.get("dateTime") or start.get("date") or ""
+    e = end.get("dateTime") or end.get("date") or ""
+    return str(s), str(e)
+
+
 def _get_credentials() -> Credentials:
     oauth_session = _OAUTH_SESSION_CTX.get()
     if not oauth_session:
@@ -64,8 +74,28 @@ def _get_credentials() -> Credentials:
 class SchedulingAgent:
     def __init__(self, config: AgentCreate):
         self.config = config
-        self.tools = [check_availability, create_appointment]
-        self.agent = create_agent(
+        # LangChain passes these callables to the LLM as "tools" it may invoke with arguments.
+        self.tools = [
+            check_availability,  # free/busy for a window
+            create_appointment,  # insert + mirror row in Supabase
+            list_calendar_events,  # optional text filter via Google's "q" param
+            find_events_by_text,  # same list API, always sets a search string (e.g. phone)
+            delete_calendar_event,  # by Google event id
+            reschedule_calendar_event,  # patch start/end on existing id
+        ]
+        self.agent = self._build_agent()
+
+    def _build_agent(self):
+        # Keep backend booting even if optional LLM deps are missing in local/dev envs.
+        if not settings.OPENAI_API_KEY:
+            return None
+        try:
+            from langchain.agents import create_agent
+            from langchain_openai import ChatOpenAI
+        except Exception:
+            return None
+
+        return create_agent(
             model=ChatOpenAI(model="gpt-4o-mini", api_key=settings.OPENAI_API_KEY),
             tools=self.tools,
             system_prompt=self.build_system_prompt(),
@@ -81,7 +111,9 @@ class SchedulingAgent:
             parts.append(f"Instructions from business: {self.config.agent_instructions}")
         parts.append(
             "Help callers book appointments and answer questions about the business. "
-            "Only book appointments for services the business offers and within business hours."
+            "Only book appointments for services the business offers and within business hours. "
+            "You can list upcoming events, search events by text (e.g. phone number in the description), "
+            "delete an event by its id, or reschedule by id with new start/end times (ISO strings in the business timezone)."
         )
         return " ".join(parts)
 
@@ -89,6 +121,7 @@ class SchedulingAgent:
         if "token" not in request.session:
             return {"reply": "Connect your Google Calendar first, then book an appointment."}
 
+        # Stash session-derived values where @tool functions can read them via ContextVar.
         oauth_token_tok = _OAUTH_SESSION_CTX.set({
             "token": request.session.get("token"),
             "refresh_token": request.session.get("refresh_token"),
@@ -99,10 +132,18 @@ class SchedulingAgent:
         })
 
         try:
+            if self.agent is None:
+                return {
+                    "reply": (
+                        "I can help once LLM setup is ready. "
+                        "Install `langchain-openai` and set `OPENAI_API_KEY`."
+                    )
+                }
             result = self.agent.invoke({"messages": [{"role": "user", "content": message}]})
             reply = result["messages"][-1].content
             return {"reply": reply}
         finally:
+            # Always clear context so later unrelated requests never reuse stale tokens.
             _OAUTH_SESSION_CTX.reset(oauth_token_tok)
             _BUSINESS_CTX.reset(business_tok)
 
@@ -166,4 +207,129 @@ def create_appointment(business_id: int, slots: Dict[str, Any]) -> Dict[str, Any
     return {
         "google_event_id": google_event_id,
         "google_event_link": created_event.get("htmlLink"),
+    }
+
+
+def _list_events_impl(
+    time_min: str,
+    time_max: str,
+    text_query: Optional[str],
+    max_results: int,
+) -> List[Dict[str, Any]]:
+    """Shared implementation for list + search tools (one Google API call shape)."""
+    calendar_id, timezone = _get_calendar_id_and_timezone()
+    creds = _get_credentials()
+    start_dt = _parse_datetime_in_tz(time_min, timezone)
+    end_dt = _parse_datetime_in_tz(time_max, timezone)
+
+    # Cap page size so the LLM never pulls an enormous payload by mistake.
+    cap = max(1, min(int(max_results), 50))
+    service = build("calendar", "v3", credentials=creds)
+    # Docs: https://developers.google.com/calendar/api/v3/reference/events/list
+    kwargs: Dict[str, Any] = {
+        "calendarId": calendar_id,
+        "timeMin": start_dt.isoformat(),
+        "timeMax": end_dt.isoformat(),
+        # Expand recurring masters into instances so each row has one concrete start time.
+        "singleEvents": True,
+        # Required when using orderBy=startTime with singleEvents.
+        "orderBy": "startTime",
+        "maxResults": cap,
+    }
+    # "q" is free-text search across title, description, location, attendees, etc.
+    if text_query and str(text_query).strip():
+        kwargs["q"] = str(text_query).strip()
+
+    result = service.events().list(**kwargs).execute()
+    items = result.get("items") or []
+    # Slim each event so tool output stays token-friendly for the model.
+    out: List[Dict[str, Any]] = []
+    for ev in items:
+        sid, eid = _event_start_end_strings(ev)
+        raw_desc = ev.get("description") or ""
+        desc = raw_desc[:200]
+        out.append({
+            "id": ev.get("id"),
+            "summary": ev.get("summary") or "(no title)",
+            "start": sid,
+            "end": eid,
+            "html_link": ev.get("htmlLink"),
+            "description_snippet": desc + ("…" if len(raw_desc) > 200 else ""),
+        })
+    return out
+
+
+@tool
+def list_calendar_events(
+    business_id: int,
+    time_min: str,
+    time_max: str,
+    text_query: Optional[str] = None,
+    max_results: int = 25,
+) -> List[Dict[str, Any]]:
+    """List events between time_min and time_max (ISO datetimes). Optional text_query searches summary, description, location (e.g. a phone number). Returns id, summary, start, end, html_link, description_snippet."""
+    # business_id reserved for future per-tenant calendar routing; tools keep a uniform signature.
+    _ = business_id
+    return _list_events_impl(time_min, time_max, text_query, max_results)
+
+
+@tool
+def find_events_by_text(
+    business_id: int,
+    search_text: str,
+    time_min: str,
+    time_max: str,
+    max_results: int = 25,
+) -> List[Dict[str, Any]]:
+    """Find events whose fields match search_text (same as Google Calendar search: summary, description, location, etc.). Use for phone numbers or names if they appear in the event text."""
+    _ = business_id
+    # Same backend as list_calendar_events, but search_text is always passed as Google's "q".
+    return _list_events_impl(time_min, time_max, search_text, max_results)
+
+
+@tool
+def delete_calendar_event(business_id: int, event_id: str) -> Dict[str, Any]:
+    """Delete a calendar event by Google event id (from list_calendar_events / create_appointment)."""
+    _ = business_id
+    calendar_id, _tz = _get_calendar_id_and_timezone()
+    creds = _get_credentials()
+    service = build("calendar", "v3", credentials=creds)
+    # Permanent delete in Google Calendar (does not auto-remove Supabase rows if you use them).
+    service.events().delete(calendarId=calendar_id, eventId=event_id).execute()
+    return {"deleted": True, "event_id": event_id}
+
+
+@tool
+def reschedule_calendar_event(
+    business_id: int,
+    event_id: str,
+    new_start: str,
+    new_end: str,
+) -> Dict[str, Any]:
+    """Move an existing event to new_start / new_end (ISO datetimes in business timezone). Preserves title and description."""
+    _ = business_id
+    calendar_id, timezone = _get_calendar_id_and_timezone()
+    creds = _get_credentials()
+    service = build("calendar", "v3", credentials=creds)
+
+    # Must GET full resource first: update() replaces the body you send; we only mutate times.
+    ev = service.events().get(calendarId=calendar_id, eventId=event_id).execute()
+    new_start_dt = _parse_datetime_in_tz(new_start, timezone)
+    new_end_dt = _parse_datetime_in_tz(new_end, timezone)
+
+    # Timed events use dateTime + timeZone (all-day events use "date" only—we assume timed here).
+    ev["start"] = {"dateTime": new_start_dt.isoformat(), "timeZone": timezone}
+    ev["end"] = {"dateTime": new_end_dt.isoformat(), "timeZone": timezone}
+
+    updated = (
+        service.events()
+        .update(calendarId=calendar_id, eventId=event_id, body=ev)
+        .execute()
+    )
+    sid, eid = _event_start_end_strings(updated)
+    return {
+        "google_event_id": updated.get("id"),
+        "google_event_link": updated.get("htmlLink"),
+        "start": sid,
+        "end": eid,
     }
