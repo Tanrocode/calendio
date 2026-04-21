@@ -1,6 +1,6 @@
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from ..supabase_auth import CurrentUser, get_current_user
@@ -56,6 +56,39 @@ def create_agent(body: AgentCreate, current_user: CurrentUser = Depends(get_curr
         .execute()
     )
     return result.data[0]
+
+
+class AgentChatBody(BaseModel):
+    message: str
+
+
+@router.post("/{agent_id}/chat")
+def agent_chat(
+    agent_id: int,
+    body: AgentChatBody,
+    request: Request,
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    from ..agents.scheduling_agent import SchedulingAgent
+
+    result = (
+        supabase.table("agent_configs")
+        .select("*")
+        .eq("id", agent_id)
+        .eq("user_id", current_user.id)
+        .execute()
+    )
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    config_data = result.data[0]
+    agent = SchedulingAgent(AgentCreate(
+        name=config_data["name"],
+        services=config_data.get("services"),
+        business_hours=config_data.get("business_hours"),
+        agent_instructions=config_data.get("agent_instructions"),
+    ))
+    return agent.run(user_id=current_user.id, message=body.message, request=request)
 
 
 @router.delete("/{agent_id}")

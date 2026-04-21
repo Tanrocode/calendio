@@ -66,6 +66,12 @@ export const createAgent = async (data: {
   return res.data;
 };
 
+export const chatWithAgent = async (agentId: number, message: string): Promise<{ reply: string }> => {
+  const headers = await getAuthHeaders();
+  const res = await axios.post(`/agents/${agentId}/chat`, { message }, { headers });
+  return res.data;
+};
+
 export const deleteAgent = async (id: number): Promise<void> => {
   const headers = await getAuthHeaders();
   await axios.delete(`/agents/${id}`, { headers });

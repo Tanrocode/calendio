@@ -1,9 +1,27 @@
 import React, { useEffect, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
-import Navbar from '../components/NavBar';
+import { useNavigate } from 'react-router-dom';
 import { authCallbackUrl, supabase } from '../lib/supabaseClient';
 
-const fontFamily = `'Inter', 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif`;
+const T = {
+  b50: '#eff6ff', b100: '#dbeafe', b600: '#2563eb', b700: '#1d4ed8',
+  s100: '#f1f5f9', s200: '#e2e8f0', s400: '#94a3b8', s500: '#64748b', s900: '#0f172a',
+};
+
+const Logo: React.FC = () => (
+  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+    <svg width={36} height={36} viewBox="0 0 40 40" fill="none">
+      <rect width="40" height="40" rx="11" fill={T.b600} />
+      <rect x="10" y="13" width="20" height="15" rx="3" fill="none" stroke="white" strokeWidth="1.6" />
+      <line x1="10" y1="18" x2="30" y2="18" stroke="white" strokeWidth="1.6" />
+      <line x1="15.5" y1="13" x2="15.5" y2="10.5" stroke="white" strokeWidth="1.8" strokeLinecap="round" />
+      <line x1="24.5" y1="13" x2="24.5" y2="10.5" stroke="white" strokeWidth="1.8" strokeLinecap="round" />
+      <circle cx="15.5" cy="23" r="1.5" fill="white" />
+      <circle cx="20" cy="22" r="1.5" fill="white" />
+      <circle cx="24.5" cy="24" r="1.5" fill="white" />
+    </svg>
+    <span style={{ fontSize: 22, fontWeight: 800, color: T.s900, letterSpacing: '-0.5px' }}>Calendio</span>
+  </div>
+);
 
 function GoogleIcon() {
   return (
@@ -20,6 +38,7 @@ const AuthPage: React.FC = () => {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [btnHover, setBtnHover] = useState(false);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -32,81 +51,72 @@ const AuthPage: React.FC = () => {
     setLoading(true);
     const { error: oauthError } = await supabase.auth.signInWithOAuth({
       provider: 'google',
-      options: {
-        redirectTo: authCallbackUrl(),
-      },
+      options: { redirectTo: authCallbackUrl() },
     });
     setLoading(false);
-    if (oauthError) {
-      setError(oauthError.message);
-    }
+    if (oauthError) setError(oauthError.message);
   };
 
   return (
-    <div style={{ fontFamily, background: '#fff', minHeight: '100vh' }}>
-      <Navbar />
+    <div style={{
+      fontFamily: 'Plus Jakarta Sans, sans-serif',
+      minHeight: '100vh',
+      background: `radial-gradient(ellipse 80% 50% at 50% -10%, ${T.b100} 0%, #fff 60%)`,
+      display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+      padding: 24,
+    }}>
+      <div style={{ marginBottom: 40 }}>
+        <Logo />
+      </div>
+
       <div style={{
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        minHeight: 'calc(100vh - 65px)',
-        padding: '24px',
+        background: '#fff', border: `1px solid ${T.s200}`,
+        borderRadius: 24, padding: '44px 40px',
+        width: '100%', maxWidth: 420,
+        boxShadow: '0 8px 40px rgba(15,23,42,0.08)',
       }}>
-        <div style={{
-          background: '#fff',
-          border: '1px solid #e8edf3',
-          borderRadius: 20,
-          padding: '48px 40px',
-          width: '100%',
-          maxWidth: 420,
-          boxShadow: '0 4px 32px rgba(30,41,59,0.08)',
-        }}>
-          <h1 style={{ fontSize: 28, fontWeight: 800, color: '#0f172a', marginBottom: 8, letterSpacing: '-0.5px' }}>
-            Sign in to Calendio
-          </h1>
-          <p style={{ fontSize: 15, color: '#64748b', marginBottom: 32, lineHeight: 1.6 }}>
-            Use Google to create an account or sign in. One step for new and returning users.
-          </p>
+        <h1 style={{ fontSize: 26, fontWeight: 800, color: T.s900, marginBottom: 8, letterSpacing: '-0.5px', marginTop: 0 }}>
+          Welcome back
+        </h1>
+        <p style={{ fontSize: 15, color: T.s500, marginBottom: 32, lineHeight: 1.65, marginTop: 0 }}>
+          Sign in to your Calendio account to manage your voice agents.
+        </p>
 
-          {error && (
-            <p style={{ color: '#991b1b', fontSize: 14, marginBottom: 16 }}>
-              {error}
-            </p>
-          )}
+        {error && (
+          <div style={{ background: '#fef2f2', border: '1px solid #fecaca', color: '#991b1b', borderRadius: 10, padding: '10px 14px', fontSize: 13, marginBottom: 20 }}>
+            {error}
+          </div>
+        )}
 
-          <button
-            type="button"
-            disabled={loading}
-            onClick={handleGoogle}
-            style={{
-              width: '100%',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 10,
-              padding: '12px',
-              background: '#fff',
-              color: '#0f172a',
-              border: '1px solid #e2e8f0',
-              borderRadius: 10,
-              fontSize: 16,
-              fontWeight: 700,
-              fontFamily,
-              cursor: loading ? 'wait' : 'pointer',
-              marginBottom: 20,
-            }}
+        <button
+          type="button"
+          disabled={loading}
+          onClick={handleGoogle}
+          onMouseEnter={() => setBtnHover(true)}
+          onMouseLeave={() => setBtnHover(false)}
+          style={{
+            width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
+            padding: '13px', background: btnHover ? T.s100 : '#fff', color: T.s900,
+            border: `1.5px solid ${btnHover ? T.s200 : T.s200}`,
+            borderRadius: 12, fontSize: 15, fontWeight: 700,
+            fontFamily: 'Plus Jakarta Sans, sans-serif',
+            cursor: loading ? 'wait' : 'pointer',
+            transition: 'all 0.15s',
+            boxShadow: btnHover ? '0 2px 8px rgba(15,23,42,0.06)' : 'none',
+          }}
+        >
+          <GoogleIcon />
+          {loading ? 'Redirecting…' : 'Continue with Google'}
+        </button>
+
+        <p style={{ textAlign: 'center', fontSize: 13, color: T.s400, marginBottom: 0, marginTop: 24 }}>
+          <span
+            onClick={() => navigate('/')}
+            style={{ color: T.b600, fontWeight: 600, cursor: 'pointer', textDecoration: 'none' }}
           >
-            <GoogleIcon />
-            {loading ? 'Redirecting…' : 'Continue with Google'}
-          </button>
-
-          <p style={{ textAlign: 'center', fontSize: 14, color: '#64748b', margin: 0 }}>
-            <Link to="/" style={{ color: '#2563eb', fontWeight: 600, textDecoration: 'none' }}>
-              Back to home
-            </Link>
-          </p>
-        </div>
+            ← Back to home
+          </span>
+        </p>
       </div>
     </div>
   );
