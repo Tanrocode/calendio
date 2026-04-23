@@ -77,3 +77,13 @@ export const deleteAgent = async (id: number): Promise<void> => {
   await axios.delete(`/agents/${id}`, { headers });
   agentsCache = null; // invalidate cache
 };
+
+export const getCalendarStatus = async (): Promise<{ connected: boolean }> => {
+  const res = await axios.get('/calendar-demo/status', { withCredentials: true });
+  return res.data;
+};
+
+export const getCalendarAuthUrl = async (next: string): Promise<{ url: string }> => {
+  const res = await axios.get(`/auth/url?next=${encodeURIComponent(next)}`, { withCredentials: true });
+  return res.data;
+};

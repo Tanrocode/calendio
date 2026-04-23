@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { getAgent, deleteAgent, chatWithAgent } from '../services/api';
+import { getAgent, deleteAgent, chatWithAgent, getCalendarStatus, getCalendarAuthUrl } from '../services/api';
 import type { AgentConfig } from '../services/api';
 import Sidebar from '../components/Sidebar';
 
@@ -16,6 +16,7 @@ const T = {
 const Icon: React.FC<{ id: string; size?: number; color?: string }> = ({ id, size = 18, color = 'currentColor' }) => {
   const paths: Record<string, React.ReactNode> = {
     mic: <><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z" /><path d="M19 10v2a7 7 0 0 1-14 0v-2" /><line x1="12" y1="19" x2="12" y2="22" /></>,
+    bot: <><path d="M12 8V4H8" /><rect width="16" height="12" x="4" y="8" rx="2" /><path d="M2 14h2" /><path d="M20 14h2" /><path d="M15 13v2" /><path d="M9 13v2" /></>,
     chevLeft: <path d="M15 18l-6-6 6-6" />,
     send: <><line x1="22" y1="2" x2="11" y2="13" /><polygon points="22 2 15 22 11 13 2 9 22 2" /></>,
   };
@@ -71,7 +72,7 @@ const QUICK_PROMPTS = [
 
 type Message = { role: 'user' | 'assistant'; content: string };
 
-const ConvoTester: React.FC<{ agent: AgentConfig }> = ({ agent }) => {
+const ConvoTester: React.FC<{ agent: AgentConfig; calendarConnected: boolean | null }> = ({ agent, calendarConnected }) => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -114,7 +115,7 @@ const ConvoTester: React.FC<{ agent: AgentConfig }> = ({ agent }) => {
         </div>
         <div>
           <div style={{ fontSize: 14, fontWeight: 800, color: T.s900 }}>{agent.name}</div>
-          <div style={{ fontSize: 12, color: T.s400, fontWeight: 500 }}>Simulated call — responses powered by AI</div>
+          <div style={{ fontSize: 12, color: T.s400, fontWeight: 500 }}>Simulates how your agent will behave with real customers</div>
         </div>
         {started && (
           <button onClick={() => { setMessages([]); setStarted(false); }}
@@ -128,7 +129,23 @@ const ConvoTester: React.FC<{ agent: AgentConfig }> = ({ agent }) => {
 
       {/* Messages */}
       <div style={{ flex: 1, overflowY: 'auto', padding: '24px 24px 16px' }}>
-        {!started && (
+        {!calendarConnected && (
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 12, paddingBottom: 16 }}>
+            <div style={{ width: 48, height: 48, borderRadius: 14, background: T.s100, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <svg width={22} height={22} viewBox="0 0 24 24" fill="none" stroke={T.s400} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" />
+              </svg>
+            </div>
+            <div style={{ textAlign: 'center' }}>
+              <div style={{ fontSize: 15, fontWeight: 700, color: T.s900, marginBottom: 6 }}>Google Calendar required</div>
+              <div style={{ fontSize: 13, color: T.s400, maxWidth: 260, lineHeight: 1.6 }}>
+                Connect your Google Calendar using the panel on the left to start testing your agent.
+              </div>
+            </div>
+          </div>
+        )}
+
+        {calendarConnected && !started && (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 24, paddingBottom: 16 }}>
             <div style={{ textAlign: 'center' }}>
               <div style={{ fontSize: 40, marginBottom: 12 }}>📞</div>
@@ -154,7 +171,7 @@ const ConvoTester: React.FC<{ agent: AgentConfig }> = ({ agent }) => {
           <div key={i} style={{ display: 'flex', justifyContent: m.role === 'user' ? 'flex-end' : 'flex-start', marginBottom: 14 }}>
             {m.role === 'assistant' && (
               <div style={{ width: 28, height: 28, borderRadius: 99, background: `linear-gradient(135deg,${T.b500},${T.v600})`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginRight: 8, marginTop: 2 }}>
-                <Icon id="mic" color="#fff" size={12} />
+                <Icon id="bot" color="#fff" size={12} />
               </div>
             )}
             <div style={{ maxWidth: '72%', padding: '11px 16px', borderRadius: m.role === 'user' ? '18px 18px 4px 18px' : '18px 18px 18px 4px', background: m.role === 'user' ? T.b600 : T.s100, color: m.role === 'user' ? '#fff' : T.s700, fontSize: 14, lineHeight: 1.6, fontWeight: 500 }}>
@@ -166,7 +183,7 @@ const ConvoTester: React.FC<{ agent: AgentConfig }> = ({ agent }) => {
         {loading && (
           <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8, marginBottom: 14 }}>
             <div style={{ width: 28, height: 28, borderRadius: 99, background: `linear-gradient(135deg,${T.b500},${T.v600})`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-              <Icon id="mic" color="#fff" size={12} />
+              <Icon id="bot" color="#fff" size={12} />
             </div>
             <TypingIndicator />
           </div>
@@ -174,23 +191,22 @@ const ConvoTester: React.FC<{ agent: AgentConfig }> = ({ agent }) => {
         <div ref={bottomRef} />
       </div>
 
-      {/* Input (S*/}
-      <div style={{ padding: '12px 16px', borderTop: `1px solid ${T.s100}`, display: 'flex', gap: 8 }}>
+      {/* Input */}
+      <div style={{ padding: '12px 16px', borderTop: `1px solid ${T.s100}`, display: 'flex', gap: 8, opacity: calendarConnected ? 1 : 0.4, pointerEvents: calendarConnected ? 'auto' : 'none' }}>
         <input
           ref={inputRef}
           value={input}
           onChange={e => setInput(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(input); } }}
-          placeholder="Type as a caller…"
+          placeholder={calendarConnected ? 'Type as a caller…' : 'Connect Google Calendar to start…'}
           style={{ flex: 1, padding: '11px 16px', border: `1.5px solid ${T.s200}`, borderRadius: 12, fontSize: 14, outline: 'none', fontFamily: 'Plus Jakarta Sans, sans-serif', color: T.s900, transition: 'border-color 0.15s', background: '#fff' }}
           onFocus={e => (e.target.style.borderColor = T.b600)}
           onBlur={e => (e.target.style.borderColor = T.s200)}
         />
-        {/* must have send(input) onClick here */}
-        <button onClick={() => send(input)} disabled={!input.trim() || loading}
+        <button onClick={() => send(input)} disabled={!input.trim() || loading || !calendarConnected}
           onMouseEnter={e => { if (input.trim() && !loading) e.currentTarget.style.background = T.b700; }}
           onMouseLeave={e => { e.currentTarget.style.background = T.b600; }}
-          style={{ padding: '11px 18px', background: T.b600, color: '#fff', border: 'none', borderRadius: 12, fontWeight: 700, fontSize: 14, cursor: (!input.trim() || loading) ? 'not-allowed' : 'pointer', opacity: (!input.trim() || loading) ? 0.5 : 1, transition: 'all 0.15s', fontFamily: 'Plus Jakarta Sans, sans-serif', display: 'flex', alignItems: 'center', gap: 6 }}>
+          style={{ padding: '11px 18px', background: T.b600, color: '#fff', border: 'none', borderRadius: 12, fontWeight: 700, fontSize: 14, cursor: (!input.trim() || loading || !calendarConnected) ? 'not-allowed' : 'pointer', opacity: (!input.trim() || loading) ? 0.5 : 1, transition: 'all 0.15s', fontFamily: 'Plus Jakarta Sans, sans-serif', display: 'flex', alignItems: 'center', gap: 6 }}>
           <Icon id="send" size={15} color="#fff" /> Send
         </button>
       </div>
@@ -205,6 +221,8 @@ const AgentPage: React.FC = () => {
   const [agent, setAgent] = useState<AgentConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
+  const [calendarConnected, setCalendarConnected] = useState<boolean | null>(null);
+  const [calendarLoading, setCalendarLoading] = useState(false);
 
   useEffect(() => {
     if (!id) return;
@@ -213,6 +231,23 @@ const AgentPage: React.FC = () => {
       .catch(() => setError(true))
       .finally(() => setLoading(false));
   }, [id]);
+
+  useEffect(() => {
+    getCalendarStatus()
+      .then(d => setCalendarConnected(d.connected))
+      .catch(() => setCalendarConnected(false));
+  }, []);
+
+  const handleConnectCalendar = async () => {
+    if (!id) return;
+    setCalendarLoading(true);
+    try {
+      const data = await getCalendarAuthUrl(`/agent/${id}`);
+      window.location.href = data.url;
+    } catch {
+      setCalendarLoading(false);
+    }
+  };
 
   const handleDelete = async () => {
     if (!agent) return;
@@ -274,7 +309,7 @@ const AgentPage: React.FC = () => {
             <div style={{ background: '#fff', border: `1px solid ${T.s200}`, borderRadius: 20, padding: '28px 24px', boxShadow: '0 2px 8px rgba(15,23,42,0.04)' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 28 }}>
                 <div style={{ width: 52, height: 52, borderRadius: 16, background: `linear-gradient(135deg,${T.b500},${T.v600})`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                  <Icon id="mic" color="#fff" size={22} />
+                  <Icon id="bot" color="#fff" size={22} />
                 </div>
                 <div>
                   <div style={{ fontSize: 17, fontWeight: 800, color: T.s900, letterSpacing: '-0.3px' }}>{agent.name}</div>
@@ -287,6 +322,35 @@ const AgentPage: React.FC = () => {
                 <div style={{ fontSize: 13, color: T.s300, textAlign: 'center', padding: '12px 0' }}>
                   No details configured yet.
                 </div>
+              )}
+            </div>
+
+            {/* Google Calendar auth card */}
+            <div style={{ background: '#fff', border: `1px solid ${T.s200}`, borderRadius: 20, padding: '20px 24px', boxShadow: '0 2px 8px rgba(15,23,42,0.04)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                <svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke={T.s500} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="3" y="4" width="18" height="18" rx="2" ry="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" />
+                </svg>
+                <div style={{ fontSize: 12, fontWeight: 800, color: T.s500, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Google Calendar</div>
+              </div>
+
+              {calendarConnected ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <div style={{ width: 8, height: 8, borderRadius: 99, background: T.green, boxShadow: '0 0 0 2px rgba(34,197,94,0.25)', flexShrink: 0 }} />
+                  <span style={{ fontSize: 13, fontWeight: 600, color: '#15803d' }}>Connected</span>
+                </div>
+              ) : (
+                <>
+                  <p style={{ fontSize: 13, color: T.s400, marginBottom: 14, lineHeight: 1.6, marginTop: 0 }}>
+                    Connect your Google Calendar so your agent can check availability and book appointments.
+                  </p>
+                  <button onClick={handleConnectCalendar} disabled={calendarLoading}
+                    onMouseEnter={e => { if (!calendarLoading) e.currentTarget.style.background = T.b700; }}
+                    onMouseLeave={e => { e.currentTarget.style.background = T.b600; }}
+                    style={{ width: '100%', padding: 9, background: T.b600, border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 700, color: '#fff', cursor: calendarLoading ? 'not-allowed' : 'pointer', opacity: calendarLoading ? 0.6 : 1, fontFamily: 'Plus Jakarta Sans, sans-serif', transition: 'all 0.12s' }}>
+                    {calendarLoading ? 'Redirecting…' : 'Connect Google Calendar'}
+                  </button>
+                </>
               )}
             </div>
 
@@ -305,7 +369,7 @@ const AgentPage: React.FC = () => {
 
           {/* Right: Conversation Tester */}
           <div style={{ display: 'flex', flexDirection: 'column', minHeight: 500 }}>
-            <ConvoTester agent={agent} />
+            <ConvoTester agent={agent} calendarConnected={calendarConnected} />
           </div>
         </div>
       </main>

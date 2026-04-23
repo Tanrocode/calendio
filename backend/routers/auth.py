@@ -1,4 +1,3 @@
-from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -15,18 +14,6 @@ os.environ.setdefault('OAUTHLIB_INSECURE_TRANSPORT', '1')
 
 router = APIRouter(tags=['google-oauth'])
 
-BACKEND_DIR = Path(__file__).resolve().parent.parent
-_CREDENTIALS_CANDIDATES = [
-    BACKEND_DIR / 'credentials.json',
-    BACKEND_DIR / 'agents' / 'credentials.json',
-]
-
-
-def _credentials_path() -> Path:
-    for p in _CREDENTIALS_CANDIDATES:
-        if p.is_file():
-            return p
-    return _CREDENTIALS_CANDIDATES[0]
 
 
 FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://127.0.0.1:3000')
@@ -54,11 +41,16 @@ def _redirect_uri_and_frontend_for_request(request: Request):
 
 
 def get_flow(redirect_uri: str) -> Flow:
-    return Flow.from_client_secrets_file(
-        str(_credentials_path()),
-        scopes=SCOPES,
-        redirect_uri=redirect_uri,
-    )
+    client_config = {
+        'web': {
+            'client_id': os.getenv('GOOGLE_CLIENT_ID'),
+            'client_secret': os.getenv('GOOGLE_CLIENT_SECRET'),
+            'auth_uri': 'https://accounts.google.com/o/oauth2/auth',
+            'token_uri': 'https://oauth2.googleapis.com/token',
+            'redirect_uris': [redirect_uri],
+        }
+    }
+    return Flow.from_client_config(client_config, scopes=SCOPES, redirect_uri=redirect_uri, autogenerate_code_verifier=True)
 
 
 def _build_credentials(request: Request) -> Credentials:
@@ -90,6 +82,7 @@ def auth_url(request: Request, next: Optional[str] = Query(None)):
     flow = get_flow(redirect_uri)
     url, state = flow.authorization_url(access_type='offline')
     request.session['state'] = state
+    request.session['code_verifier'] = flow.code_verifier
     return {'url': url}
 
 
@@ -105,6 +98,7 @@ def callback(request: Request):
     try:
         redirect_uri = request.session.get('oauth_redirect_uri') or REDIRECT_127
         flow = get_flow(redirect_uri)
+        flow.code_verifier = request.session.get('code_verifier')
         flow.fetch_token(authorization_response=str(request.url))
         credentials = flow.credentials
         request.session['token'] = credentials.token
