@@ -89,7 +89,13 @@ def agent_chat(
         business_hours=config_data.get("business_hours"),
         agent_instructions=config_data.get("agent_instructions"),
     ))
-    return agent.run(user_id=current_user.id, message=body.message, history=body.history, request=request)
+    return agent.run(
+        user_id=current_user.id,
+        message=body.message,
+        history=body.history,
+        request=request,
+        agent_id=agent_id,
+    )
 
 
 @router.delete("/{agent_id}")
