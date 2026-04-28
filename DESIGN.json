@@ -1,0 +1,207 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-04-26T00:00:00Z",
+  "title": "Design System: Calendio",
+  "extensions": {
+    "colorMeta": {
+      "teal": {
+        "role": "primary",
+        "displayName": "Serene Teal",
+        "canonical": "oklch(50% 0.09 188)",
+        "tonalRamp": ["#072e2c", "#0d4a47", "#136260", "#1a7572", "#1d7874", "#3d9e9a", "#7ec4c1", "#caeae8", "#e8f5f4"]
+      },
+      "teal-deep": {
+        "role": "primary-deep",
+        "displayName": "Deep Teal",
+        "canonical": "oklch(42% 0.09 188)",
+        "tonalRamp": ["#041e1d", "#093c3a", "#105452", "#156360", "#1a706d", "#348e8b", "#6ebbb8", "#c4e6e4", "#eaf6f5"]
+      },
+      "teal-soft": {
+        "role": "primary-surface",
+        "displayName": "Teal Mist",
+        "canonical": "oklch(95% 0.02 188)",
+        "tonalRamp": ["#072e2c", "#0d4a47", "#136260", "#1a7572", "#3d9e9a", "#7ec4c1", "#b5dfdd", "#d6eeec", "#e8f5f4"]
+      },
+      "warm-ink": {
+        "role": "neutral-ink",
+        "displayName": "Warm Ink",
+        "canonical": "oklch(15% 0.012 60)",
+        "tonalRamp": ["#1a1510", "#2e2822", "#443e36", "#5c5550", "#756d65", "#8f887f", "#b4aea8", "#ddd8d2", "#f4f0e8"]
+      },
+      "warm-bg": {
+        "role": "neutral-background",
+        "displayName": "Warm Off-White",
+        "canonical": "oklch(98% 0.008 60)",
+        "tonalRamp": ["#1a1510", "#2e2822", "#5c5550", "#8f887f", "#b4aea8", "#ccc7bd", "#e5e0d8", "#f4f0e8", "#faf8f4"]
+      },
+      "status-active": {
+        "role": "status",
+        "displayName": "Active Green",
+        "canonical": "oklch(60% 0.10 162)",
+        "tonalRamp": ["#0b3325", "#154e39", "#1d6b4e", "#248a64", "#2a9d72", "#4ab88e", "#86d3b4", "#c0ebd9", "#e6f7f0"]
+      },
+      "status-error": {
+        "role": "status-error",
+        "displayName": "Warm Red",
+        "canonical": "oklch(48% 0.14 25)",
+        "tonalRamp": ["#3b0e08", "#5e1810", "#8b2419", "#b3352a", "#c94a3a", "#dc6e62", "#ed9f98", "#f7ceca", "#fdeeed"]
+      }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Display", "purpose": "Landing page hero headline only. Never in the app shell." },
+      "headline": { "displayName": "Headline", "purpose": "Page titles (one per screen), major landing section headers." },
+      "title": { "displayName": "Title", "purpose": "Card titles, modal headings, named entity names in the product." },
+      "body": { "displayName": "Body", "purpose": "All readable prose. Max line length 65-75ch." },
+      "label": { "displayName": "Label", "purpose": "Form field labels, section eyebrows, table headers, metadata. Always uppercase with 0.07em tracking." }
+    },
+    "shadows": [
+      {
+        "name": "resting",
+        "value": "0 2px 8px rgba(25, 21, 16, 0.05)",
+        "purpose": "Default card state. Barely visible — establishes a surface without drawing attention."
+      },
+      {
+        "name": "hover",
+        "value": "0 8px 28px -8px rgba(25, 21, 16, 0.12)",
+        "purpose": "Clickable cards on hover. Used alongside border shift to teal-mid (#c0e4e2)."
+      },
+      {
+        "name": "overlay",
+        "value": "0 12px 48px -12px rgba(25, 21, 16, 0.18)",
+        "purpose": "Modals, dropdowns, elevated panels. The only dramatic shadow in the system."
+      },
+      {
+        "name": "teal-glow",
+        "value": "0 6px 20px -4px rgba(29, 120, 116, 0.35)",
+        "purpose": "Primary button hover only. Warm teal tint — not a generic blue glow."
+      }
+    ],
+    "motion": [
+      {
+        "name": "ease-standard",
+        "value": "cubic-bezier(0.22, 1, 0.36, 1)",
+        "purpose": "Default easing for all state transitions. Exponential ease-out — settles quickly, never bounces."
+      },
+      {
+        "name": "duration-fast",
+        "value": "120ms",
+        "purpose": "Color and border transitions on interactive elements (button hover, input focus)."
+      },
+      {
+        "name": "duration-standard",
+        "value": "160ms",
+        "purpose": "Shadow and opacity transitions on cards and overlays."
+      },
+      {
+        "name": "duration-enter",
+        "value": "220ms",
+        "purpose": "Modal and overlay entrance. Combine with translateY(12px) → translateY(0) + opacity 0 → 1."
+      }
+    ],
+    "breakpoints": [
+      { "name": "sm", "value": "640px" },
+      { "name": "md", "value": "768px" },
+      { "name": "lg", "value": "1024px" },
+      { "name": "xl", "value": "1280px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Main CTA. Used for the single primary action on any surface.",
+      "html": "<button class=\"ds-btn-primary\">Start for free →</button>",
+      "css": ".ds-btn-primary { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 13px 26px; background: #1d7874; color: #ffffff; border: none; border-radius: 12px; font-family: 'Plus Jakarta Sans', sans-serif; font-size: 15px; font-weight: 700; letter-spacing: -0.02em; cursor: pointer; transition: background 120ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 120ms cubic-bezier(0.22, 1, 0.36, 1); } .ds-btn-primary:hover { background: #156360; box-shadow: 0 6px 20px -4px rgba(29, 120, 116, 0.35); } .ds-btn-primary:focus-visible { outline: 2px solid #1d7874; outline-offset: 3px; } .ds-btn-primary:active { transform: translateY(1px); }"
+    },
+    {
+      "name": "Ghost Button",
+      "kind": "button",
+      "refersTo": "button-ghost",
+      "description": "Secondary action. Always paired alongside a primary — never used alone as the only CTA.",
+      "html": "<button class=\"ds-btn-ghost\">See how it works</button>",
+      "css": ".ds-btn-ghost { display: inline-flex; align-items: center; justify-content: center; padding: 13px 26px; background: transparent; color: #403a34; border: 1.5px solid #e5e0d8; border-radius: 12px; font-family: 'Plus Jakarta Sans', sans-serif; font-size: 15px; font-weight: 700; letter-spacing: -0.02em; cursor: pointer; transition: background 120ms cubic-bezier(0.22, 1, 0.36, 1), border-color 120ms, color 120ms; } .ds-btn-ghost:hover { background: #f4f0e8; border-color: #ccc7bd; color: #1a1510; } .ds-btn-ghost:focus-visible { outline: 2px solid #1d7874; outline-offset: 3px; }"
+    },
+    {
+      "name": "Text Input",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Standard form input. Used for agent name, services, business hours, and instructions fields.",
+      "html": "<div class=\"ds-field\"><label class=\"ds-field-label\">Agent Name</label><input class=\"ds-input\" type=\"text\" placeholder=\"e.g. Booking Assistant\"></div>",
+      "css": ".ds-field { display: flex; flex-direction: column; gap: 6px; } .ds-field-label { font-family: 'Plus Jakarta Sans', sans-serif; font-size: 12px; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase; color: #756d65; } .ds-input { width: 100%; padding: 10px 14px; background: #ffffff; border: 1px solid #e5e0d8; border-radius: 12px; font-family: 'Plus Jakarta Sans', sans-serif; font-size: 15px; font-weight: 500; color: #1a1510; box-sizing: border-box; transition: border-color 120ms cubic-bezier(0.22, 1, 0.36, 1); outline: none; } .ds-input::placeholder { color: #a39a91; } .ds-input:focus { border-color: #1d7874; } .ds-input:disabled { background: #f4f0e8; border-color: #e5e0d8; color: #a39a91; cursor: not-allowed; }"
+    },
+    {
+      "name": "Agent Card",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "Primary dashboard unit. Represents one configured voice agent.",
+      "html": "<div class=\"ds-agent-card\"><div class=\"ds-agent-card-header\"><div class=\"ds-agent-avatar\"><svg width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"#1d7874\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z\"/><path d=\"M19 10v2a7 7 0 0 1-14 0v-2\"/><line x1=\"12\" y1=\"19\" x2=\"12\" y2=\"22\"/></svg></div><div><div class=\"ds-agent-name\">Booking Assistant</div><div class=\"ds-agent-status\"><span class=\"ds-status-dot\"></span><span class=\"ds-status-label\">Active</span></div></div></div><div class=\"ds-agent-services\">Haircut, Color treatment, Styling</div><div class=\"ds-agent-date\">Created Apr 20, 2025</div></div>",
+      "css": ".ds-agent-card { background: #ffffff; border: 1px solid #e5e0d8; border-radius: 16px; padding: 20px; box-shadow: 0 2px 8px rgba(25, 21, 16, 0.05); display: flex; flex-direction: column; gap: 12px; cursor: pointer; transition: border-color 160ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 160ms cubic-bezier(0.22, 1, 0.36, 1); width: 220px; } .ds-agent-card:hover { border-color: #c0e4e2; box-shadow: 0 8px 28px -8px rgba(25, 21, 16, 0.12); } .ds-agent-card-header { display: flex; align-items: center; gap: 10px; } .ds-agent-avatar { width: 38px; height: 38px; border-radius: 11px; background: #e8f5f4; display: flex; align-items: center; justify-content: center; flex-shrink: 0; } .ds-agent-name { font-family: 'Plus Jakarta Sans', sans-serif; font-size: 15px; font-weight: 700; color: #1a1510; letter-spacing: -0.015em; } .ds-agent-status { display: flex; align-items: center; gap: 5px; margin-top: 2px; } .ds-status-dot { width: 6px; height: 6px; border-radius: 50%; background: #1d7874; } .ds-status-label { font-family: 'Plus Jakarta Sans', sans-serif; font-size: 11px; font-weight: 700; color: #1d7874; letter-spacing: 0.04em; } .ds-agent-services { font-family: 'Plus Jakarta Sans', sans-serif; font-size: 13px; font-weight: 500; color: #756d65; line-height: 1.5; } .ds-agent-date { font-family: 'Plus Jakarta Sans', sans-serif; font-size: 11px; font-weight: 600; color: #a39a91; letter-spacing: 0.02em; }"
+    },
+    {
+      "name": "Status Badge — Active",
+      "kind": "chip",
+      "refersTo": "card",
+      "description": "Agent online/active indicator. Teal family, never cold green.",
+      "html": "<span class=\"ds-badge ds-badge--active\"><span class=\"ds-badge-dot\"></span>Active</span>",
+      "css": ".ds-badge { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 9999px; font-family: 'Plus Jakarta Sans', sans-serif; font-size: 12px; font-weight: 700; letter-spacing: 0.04em; } .ds-badge--active { background: #e8f5f4; color: #1d7874; } .ds-badge--inactive { background: #f4f0e8; color: #756d65; } .ds-badge-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }"
+    },
+    {
+      "name": "Sidebar Navigation",
+      "kind": "nav",
+      "refersTo": "card",
+      "description": "App shell sidebar. Warm white surface, single right border, teal active state.",
+      "html": "<nav class=\"ds-sidebar\"><div class=\"ds-sidebar-logo\">Calendio</div><a class=\"ds-nav-item ds-nav-item--active\" href=\"#\">Dashboard</a><a class=\"ds-nav-item\" href=\"#\">My Agents</a><a class=\"ds-nav-item\" href=\"#\">Calendar</a><a class=\"ds-nav-item\" href=\"#\">Settings</a></nav>",
+      "css": ".ds-sidebar { width: 200px; background: #ffffff; border-right: 1px solid #e5e0d8; padding: 20px 12px; display: flex; flex-direction: column; gap: 2px; min-height: 100vh; box-sizing: border-box; } .ds-sidebar-logo { font-family: 'Plus Jakarta Sans', sans-serif; font-size: 17px; font-weight: 800; color: #1a1510; letter-spacing: -0.03em; padding: 8px 10px 20px; } .ds-nav-item { display: block; padding: 9px 10px; border-radius: 8px; font-family: 'Plus Jakarta Sans', sans-serif; font-size: 14px; font-weight: 500; color: #756d65; text-decoration: none; transition: background 120ms cubic-bezier(0.22, 1, 0.36, 1), color 120ms; } .ds-nav-item:hover { background: #f4f0e8; color: #1a1510; } .ds-nav-item--active { background: #e8f5f4; color: #1d7874; font-weight: 700; }"
+    },
+    {
+      "name": "Add Agent Card",
+      "kind": "custom",
+      "refersTo": "card",
+      "description": "Dashed placeholder card in the agents grid. Invites creation without visual weight.",
+      "html": "<button class=\"ds-agent-add\"><svg width=\"22\" height=\"22\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"#a39a91\" stroke-width=\"1.8\" stroke-linecap=\"round\"><line x1=\"12\" y1=\"5\" x2=\"12\" y2=\"19\"/><line x1=\"5\" y1=\"12\" x2=\"19\" y2=\"12\"/></svg><span class=\"ds-agent-add-label\">New agent</span></button>",
+      "css": ".ds-agent-add { width: 220px; min-height: 120px; border: 1.5px dashed #e5e0d8; border-radius: 16px; background: transparent; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; cursor: pointer; transition: border-color 160ms cubic-bezier(0.22, 1, 0.36, 1), background 160ms; font-family: 'Plus Jakarta Sans', sans-serif; } .ds-agent-add:hover { border-color: #c0e4e2; background: #e8f5f4; } .ds-agent-add:hover svg { stroke: #1d7874; } .ds-agent-add:hover .ds-agent-add-label { color: #1d7874; } .ds-agent-add-label { font-size: 13px; font-weight: 700; color: #a39a91; letter-spacing: -0.01em; transition: color 160ms; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Trusted Front Desk",
+    "overview": "Not a cold data terminal. Not a flashy startup dashboard. Calendio's visual system should feel like a well-run service business reception — warm, unhurried, completely in order. A salon owner opens the app and feels immediately reassured, not impressed. Confidence here comes from clarity and warmth, not from dramatic accents or clever animation.\n\nThe palette moves from cold slate-and-blue toward warm cream neutrals anchored by a single deep warm teal. Page backgrounds are warm off-white rather than sterile. Card borders have a cream cast. Shadows are tinted brown, not blue-black. The primary accent is not a generic SaaS blue — it is a purposeful teal that reads as calm and capable without raising its voice.\n\nThis system explicitly rejects the Supabase pattern: dense controls, multiple competing panels, developer vocabulary that intimidates a small-business owner. It also rejects the generic SaaS dashboard reflex — metric tiles in a grid, blue-to-violet gradients as decoration, gradient text on headlines, floating accent colors fighting for attention everywhere.",
+    "keyCharacteristics": [
+      "Warm off-white page background, never cold slate",
+      "Single warm-teal accent held to ≤15% of any surface",
+      "Shadows are warm and diffuse, tinted brown not blue-black",
+      "Motion is quiet — state feedback only, no choreography",
+      "Typography hierarchy through weight contrast, not multiple typefaces",
+      "All copy is calm and direct; no exclamation marks, no startup energy"
+    ],
+    "rules": [
+      { "name": "The One Teal Rule", "body": "teal (#1d7874) appears on ≤15% of any given screen. It marks what the user should act on or notice — nothing else. Multiple teal accents competing on the same view is a failure state.", "section": "colors" },
+      { "name": "The Warm Ground Rule", "body": "No surface or background uses a cold-tinted neutral. The entire cold Tailwind slate scale (#f8fafc, #e2e8f0, #94a3b8, #0f172a) is retired. Every neutral in this system derives from warm-bg and shifts toward warm-ink.", "section": "colors" },
+      { "name": "The No-Gradient Rule", "body": "No gradients used as decoration. No blue-to-violet CTA banners. No background-clip: text gradient headlines. Solid teal or solid warm-ink — these are the only fills a headline or button ever needs.", "section": "colors" },
+      { "name": "The No-Italic Rule", "body": "This system has no italic styles. Emphasis is weight (700 vs 500) or Label-style ALL CAPS. Italics signal uncertainty or informality — neither belongs in a product that earns trust by being steady.", "section": "typography" },
+      { "name": "The Weight Bridge Rule", "body": "Any two adjacent text levels must differ by at least one full weight step (800→700 or 700→500). A flat-weight page where everything is font-weight: 600 has no hierarchy.", "section": "typography" },
+      { "name": "The Warm Shadow Rule", "body": "Shadow color is always derived from warm-ink (rgba(25, 21, 16, ...)). Cold blue-black shadows conflict with the warm ground. If someone could sample the shadow color and identify Tailwind slate, it's wrong.", "section": "elevation" },
+      { "name": "The Flat-by-Default Rule", "body": "A shadow on a non-interactive, non-elevated surface is decoration, not affordance. Remove it. Shadows are earned by state or structural role — never applied to make a card feel 'more card-like.'", "section": "elevation" }
+    ],
+    "dos": [
+      "Do use warm-bg (#faf8f4) as the outermost page background.",
+      "Do keep teal (#1d7874) to ≤15% of any screen.",
+      "Do use warm shadows exclusively: rgba(25, 21, 16, ...) derived from warm-ink.",
+      "Do use Label typography for form labels, section eyebrows, and metadata.",
+      "Do shift only the border color for focus states — teal on focus, status-error on validation failure.",
+      "Do keep motion to state transitions only. Easing: cubic-bezier(0.22, 1, 0.36, 1). Duration: 120–160ms."
+    ],
+    "donts": [
+      "Don't use gradient text (background-clip: text with a multi-stop gradient). One of the most identifiable AI-generated UI signals.",
+      "Don't use #2563eb (electric blue) or #7c3aed (violet). Both retired.",
+      "Don't use cold Tailwind slate neutrals: #f8fafc, #e2e8f0, #94a3b8, #64748b, #0f172a.",
+      "Don't build metric grids with oversized numbers and small labels — the hero-metric template is a SaaS cliché.",
+      "Don't use blue-to-violet gradient section backgrounds.",
+      "Don't use border-left colored stripes on cards or list items.",
+      "Don't add dark mode.",
+      "Don't let the product feel like Supabase: dense sidebars, developer vocabulary, competing panels.",
+      "Don't animate layout properties (width, height, padding, top, left).",
+      "Don't use bounce or elastic easing."
+    ]
+  }
+}

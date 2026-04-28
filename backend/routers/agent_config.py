@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
@@ -60,6 +60,7 @@ def create_agent(body: AgentCreate, current_user: CurrentUser = Depends(get_curr
 
 class AgentChatBody(BaseModel):
     message: str
+    history: List[Dict[str, Any]] = []
 
 
 @router.post("/{agent_id}/chat")
@@ -88,7 +89,7 @@ def agent_chat(
         business_hours=config_data.get("business_hours"),
         agent_instructions=config_data.get("agent_instructions"),
     ))
-    return agent.run(user_id=current_user.id, message=body.message, request=request)
+    return agent.run(user_id=current_user.id, message=body.message, history=body.history, request=request)
 
 
 @router.delete("/{agent_id}")

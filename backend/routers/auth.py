@@ -16,7 +16,10 @@ os.environ.setdefault('OAUTHLIB_INSECURE_TRANSPORT', '1')
 router = APIRouter(tags=['google-oauth'])
 
 FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:3000')
-SCOPES = ['https://www.googleapis.com/auth/calendar.events']
+SCOPES = [
+    'https://www.googleapis.com/auth/calendar.events',
+    'https://www.googleapis.com/auth/calendar.readonly',
+]
 API_PORT = int(os.getenv('API_PORT', os.getenv('FLASK_PORT', '8000')))
 REDIRECT_LOCALHOST = f'http://localhost:{API_PORT}/oauth/callback'
 REDIRECT_127 = f'http://127.0.0.1:{API_PORT}/oauth/callback'
@@ -97,7 +100,7 @@ def _safe_oauth_next_path(next: Optional[str]) -> str:
 def auth_url(request: Request, next: Optional[str] = Query(None)):
     redirect_uri, frontend = _redirect_uri_and_frontend_for_request(request)
     flow = get_flow(redirect_uri)
-    url, state = flow.authorization_url(access_type='offline')
+    url, state = flow.authorization_url(access_type='offline', prompt='consent')
     _pending_store(state, {
         'code_verifier': flow.code_verifier,
         'redirect_uri': redirect_uri,

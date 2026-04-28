@@ -131,3 +131,7 @@ backend/agents/credentials.json
 
 # Claude Code
 .claude/
+.agents/
+DESIGN.md 
+PRODUCT.md
+skills-lock.json

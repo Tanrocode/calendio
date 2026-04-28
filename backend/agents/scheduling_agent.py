@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import os
+import re
 from contextvars import ContextVar
-from datetime import datetime
-from typing import Any, Dict, List, Optional
+from datetime import datetime, time as time_type
+from typing import Any, Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 
 from fastapi import Request
@@ -24,6 +25,73 @@ _OAUTH_SESSION_CTX: ContextVar[Optional[Dict[str, Optional[str]]]] = ContextVar(
 _BUSINESS_CTX: ContextVar[Optional[Dict[str, Optional[str]]]] = ContextVar(
     "_BUSINESS_CTX", default=None
 )
+
+
+_DAY_MAP = {
+    "mon": 0, "monday": 0,
+    "tue": 1, "tuesday": 1,
+    "wed": 2, "wednesday": 2,
+    "thu": 3, "thursday": 3,
+    "fri": 4, "friday": 4,
+    "sat": 5, "saturday": 5,
+    "sun": 6, "sunday": 6,
+}
+
+
+def _parse_clock(s: str) -> time_type:
+    s = s.strip().lower()
+    m = re.match(r"^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$", s)
+    if not m:
+        raise ValueError(f"Cannot parse time: {s}")
+    hour, minute, ampm = int(m.group(1)), int(m.group(2) or 0), m.group(3)
+    if ampm == "pm" and hour != 12:
+        hour += 12
+    elif ampm == "am" and hour == 12:
+        hour = 0
+    return time_type(hour, minute)
+
+
+def _day_range(s: str) -> List[int]:
+    s = s.strip().lower()
+    if "-" in s:
+        a, b = s.split("-", 1)
+        start, end = _DAY_MAP.get(a.strip()), _DAY_MAP.get(b.strip())
+        if start is None or end is None:
+            return list(range(7))
+        # Sun(6)-Sat(5) wraps around to cover all days
+        if start <= end:
+            return list(range(start, end + 1))
+        return list(range(start, 7)) + list(range(0, end + 1))
+    day = _DAY_MAP.get(s)
+    return [day] if day is not None else list(range(7))
+
+
+def _within_business_hours(start_dt: datetime, end_dt: datetime, hours_str: str) -> Tuple[bool, str]:
+    """Return (ok, reason). reason is non-empty only when ok=False."""
+    if not hours_str:
+        return True, ""
+    appt_day = start_dt.weekday()
+    appt_start = start_dt.timetz().replace(tzinfo=None)
+    appt_end = end_dt.timetz().replace(tzinfo=None)
+    for segment in hours_str.split(","):
+        m = re.match(r"^([\w\-]+)\s+(\S+)\s*[-–]\s*(\S+)$", segment.strip())
+        if not m:
+            continue
+        try:
+            days = _day_range(m.group(1))
+            opens = _parse_clock(m.group(2))
+            closes = _parse_clock(m.group(3))
+        except ValueError:
+            continue
+        if appt_day in days:
+            if appt_start >= opens and appt_end <= closes:
+                return True, ""
+            return False, (
+                f"That time is outside business hours. "
+                f"On that day the business is open {m.group(2)}–{m.group(3)}. "
+                "Please offer a time within those hours."
+            )
+    return False, f"That day is not within business hours ({hours_str})."
 
 
 def _parse_datetime_in_tz(dt_str: str, timezone: str) -> datetime:
@@ -102,7 +170,11 @@ class SchedulingAgent:
         )
 
     def build_system_prompt(self) -> str:
-        parts = [f"You are an assistant for {self.config.name}."]
+        now = datetime.now(ZoneInfo("America/Los_Angeles"))
+        parts = [
+            f"Today is {now.strftime('%A, %B %-d, %Y')}. Current time: {now.strftime('%-I:%M %p %Z')}.",
+            f"You are an assistant for {self.config.name}.",
+        ]
         if self.config.services:
             parts.append(f"Services offered: {self.config.services}.")
         if self.config.business_hours:
@@ -111,13 +183,15 @@ class SchedulingAgent:
             parts.append(f"Instructions from business: {self.config.agent_instructions}")
         parts.append(
             "Help callers book appointments and answer questions about the business. "
-            "Only book appointments for services the business offers and within business hours. "
+            "IMPORTANT: Never book outside business hours — if a caller requests a time outside those hours, "
+            "decline politely and suggest the nearest available time within hours. "
+            "Always check availability before booking. Use ISO 8601 datetime strings in the business timezone for all tool calls. "
             "You can list upcoming events, search events by text (e.g. phone number in the description), "
-            "delete an event by its id, or reschedule by id with new start/end times (ISO strings in the business timezone)."
+            "delete an event by its id, or reschedule by id with new start/end times."
         )
         return " ".join(parts)
 
-    def run(self, user_id: int, message: str, request: Request) -> Dict[str, Any]:
+    def run(self, user_id: int, message: str, request: Request, history: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
         if "token" not in request.session:
             return {"reply": "Connect your Google Calendar first, then book an appointment."}
 
@@ -129,6 +203,7 @@ class SchedulingAgent:
         business_tok = _BUSINESS_CTX.set({
             "calendar_id": "primary",
             "timezone": "America/Los_Angeles",
+            "business_hours": self.config.business_hours or "",
         })
 
         try:
@@ -139,7 +214,11 @@ class SchedulingAgent:
                         "Install `langchain-openai` and set `OPENAI_API_KEY`."
                     )
                 }
-            result = self.agent.invoke({"messages": [{"role": "user", "content": message}]})
+            messages = [
+                {"role": m["role"], "content": m["content"]}
+                for m in (history or [])
+            ] + [{"role": "user", "content": message}]
+            result = self.agent.invoke({"messages": messages})
             reply = result["messages"][-1].content
             return {"reply": reply}
         finally:
@@ -179,11 +258,16 @@ def check_availability(business_id: int, start_datetime: str, end_datetime: str)
 def create_appointment(business_id: int, slots: Dict[str, Any]) -> Dict[str, Any]:
     """Create a calendar event. Expected slots keys: service, start, end, description (optional), customer_name (optional)."""
     calendar_id, timezone = _get_calendar_id_and_timezone()
-    creds = _get_credentials()
 
     start_dt = _parse_datetime_in_tz(str(slots["start"]), timezone)
     end_dt = _parse_datetime_in_tz(str(slots["end"]), timezone)
 
+    business_hours = (_BUSINESS_CTX.get() or {}).get("business_hours", "")
+    ok, reason = _within_business_hours(start_dt, end_dt, business_hours)
+    if not ok:
+        return {"booked": False, "error": reason}
+
+    creds = _get_credentials()
     service = build("calendar", "v3", credentials=creds)
     event = {
         "summary": slots.get("service") or "Appointment",
