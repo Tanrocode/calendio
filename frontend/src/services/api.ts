@@ -66,9 +66,13 @@ export const createAgent = async (data: {
   return res.data;
 };
 
-export const chatWithAgent = async (agentId: number, message: string): Promise<{ reply: string }> => {
+export const chatWithAgent = async (
+  agentId: number,
+  message: string,
+  history: { role: string; content: string }[] = [],
+): Promise<{ reply: string }> => {
   const headers = await getAuthHeaders();
-  const res = await axios.post(`/agents/${agentId}/chat`, { message }, { headers });
+  const res = await axios.post(`/agents/${agentId}/chat`, { message, history }, { headers, withCredentials: true });
   return res.data;
 };
 
@@ -76,4 +80,14 @@ export const deleteAgent = async (id: number): Promise<void> => {
   const headers = await getAuthHeaders();
   await axios.delete(`/agents/${id}`, { headers });
   agentsCache = null; // invalidate cache
+};
+
+export const getCalendarStatus = async (): Promise<{ connected: boolean }> => {
+  const res = await axios.get('/calendar-demo/status', { withCredentials: true });
+  return res.data;
+};
+
+export const getCalendarAuthUrl = async (next: string): Promise<{ url: string }> => {
+  const res = await axios.get(`/auth/url?next=${encodeURIComponent(next)}`, { withCredentials: true });
+  return res.data;
 };

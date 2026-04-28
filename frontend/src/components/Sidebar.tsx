@@ -2,24 +2,36 @@ import React, { useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 
 const T = {
-  b50: '#eff6ff', b500: '#3b82f6', b600: '#2563eb', v600: '#7c3aed',
-  s50: '#f8fafc', s100: '#f1f5f9', s200: '#e2e8f0',
-  s300: '#cbd5e1', s400: '#94a3b8', s600: '#475569', s900: '#0f172a',
+  forest:       '#1d8c63',
+  forestDeep:   '#177350',
+  forestSoft:   '#ecfdf5',
+  forestMid:    '#a7f3d0',
+  ink:          '#111827',
+  body:         '#374151',
+  secondary:    '#6b7280',
+  muted:        '#9ca3af',
+  border:       '#e5e7eb',
+  borderStrong: '#d1d5db',
+  surfaceAlt:   '#f9fafb',
+  bg:           '#ffffff',
+  surface:      '#ffffff',
 };
 
-const Logo: React.FC<{ size?: number }> = ({ size = 32 }) => (
+const font = "'Bricolage Grotesque', sans-serif";
+
+const Logo: React.FC = () => (
   <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-    <svg width={size} height={size} viewBox="0 0 40 40" fill="none">
-      <rect width="40" height="40" rx="11" fill={T.b600} />
-      <rect x="10" y="13" width="20" height="15" rx="3" fill="none" stroke="white" strokeWidth="1.6" />
-      <line x1="10" y1="18" x2="30" y2="18" stroke="white" strokeWidth="1.6" />
-      <line x1="15.5" y1="13" x2="15.5" y2="10.5" stroke="white" strokeWidth="1.8" strokeLinecap="round" />
-      <line x1="24.5" y1="13" x2="24.5" y2="10.5" stroke="white" strokeWidth="1.8" strokeLinecap="round" />
-      <circle cx="15.5" cy="23" r="1.5" fill="white" />
-      <circle cx="20" cy="22" r="1.5" fill="white" />
-      <circle cx="24.5" cy="24" r="1.5" fill="white" />
+    <svg width={32} height={32} viewBox="0 0 40 40" fill="none">
+      <rect width="40" height="40" rx="11" fill={T.forest} />
+      <rect x="7" y="13" width="26" height="19" rx="3" stroke="white" strokeWidth="1.6" fill="none" />
+      <line x1="7" y1="19" x2="33" y2="19" stroke="white" strokeWidth="1.6" />
+      <path d="M14 10 L14 16" stroke="white" strokeWidth="2.2" strokeLinecap="round" />
+      <path d="M26 10 L26 16" stroke="white" strokeWidth="2.2" strokeLinecap="round" />
+      <rect x="11" y="24.5" width="4" height="5.5" rx="2" fill="white" />
+      <rect x="18" y="20.5" width="5" height="9.5" rx="2.5" fill="white" />
+      <rect x="25.5" y="22.5" width="4" height="7.5" rx="2" fill="white" />
     </svg>
-    <span style={{ fontSize: size * 0.625, fontWeight: 800, color: T.s900, letterSpacing: '-0.5px' }}>
+    <span style={{ fontSize: 20, fontWeight: 800, color: T.ink, letterSpacing: '-0.5px', fontFamily: font }}>
       Calendio
     </span>
   </div>
@@ -42,14 +54,16 @@ const NavIcon: React.FC<{ id: string; size?: number; color?: string }> = ({ id, 
 };
 
 const NAV_ITEMS = [
-  { label: 'Dashboard', icon: 'home', path: '/dashboard' },
-  { label: 'My Agents', icon: 'agents', path: '/dashboard' },
-  { label: 'Calendar Demo', icon: 'calendar', path: '/calendar-demo' },
-  { label: 'Voice Demo', icon: 'voice', path: '/voice' },
-  { label: 'Settings', icon: 'settings', path: null },
+  { label: 'Dashboard',    icon: 'home',     path: '/dashboard' },
+  { label: 'My Agents',    icon: 'agents',   path: '/agents' },
+  { label: 'Calendar',     icon: 'calendar', path: '/calendar-demo' },
+  { label: 'Voice Demo',   icon: 'voice',    path: '/voice' },
+  { label: 'Settings',     icon: 'settings', path: null },
 ];
 
-const NavItem: React.FC<{ label: string; icon: string; active: boolean; onClick: () => void }> = ({ label, icon, active, onClick }) => {
+const NavItem: React.FC<{ label: string; icon: string; active: boolean; onClick: () => void }> = ({
+  label, icon, active, onClick,
+}) => {
   const [h, setH] = useState(false);
   return (
     <div
@@ -59,14 +73,15 @@ const NavItem: React.FC<{ label: string; icon: string; active: boolean; onClick:
       style={{
         display: 'flex', alignItems: 'center', gap: 11,
         padding: '10px 12px', borderRadius: 10, cursor: 'pointer',
-        background: active ? T.b50 : h ? T.s50 : 'transparent',
-        color: active ? T.b600 : h ? T.s600 : T.s400,
-        fontWeight: active ? 700 : 600, fontSize: 14,
+        background: active ? T.forestSoft : h ? T.surfaceAlt : 'transparent',
+        color: active ? T.forest : h ? T.body : T.secondary,
+        fontWeight: active ? 700 : 500, fontSize: 14,
         transition: 'all 0.12s',
-        fontFamily: 'Plus Jakarta Sans, sans-serif',
+        fontFamily: font,
+        userSelect: 'none',
       }}
     >
-      <NavIcon id={icon} size={18} color={active ? T.b600 : h ? T.s600 : T.s400} />
+      <NavIcon id={icon} size={18} color={active ? T.forest : h ? T.body : T.muted} />
       {label}
     </div>
   );
@@ -77,36 +92,57 @@ const Sidebar: React.FC = () => {
   const location = useLocation();
 
   return (
-    <aside style={{
-      width: 232, height: '100vh', position: 'sticky', top: 0, flexShrink: 0,
-      background: '#fff', borderRight: `1px solid ${T.s100}`,
-      display: 'flex', flexDirection: 'column', padding: '24px 14px',
-      fontFamily: 'Plus Jakarta Sans, sans-serif',
-    }}>
-      <div style={{ padding: '4px 6px', marginBottom: 32, cursor: 'pointer' }} onClick={() => navigate('/')}>
-        <Logo size={32} />
-      </div>
-
-      <nav style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 2 }}>
-        {NAV_ITEMS.map(({ label, icon, path }) => (
-          <NavItem
-            key={label}
-            label={label}
-            icon={icon}
-            active={!!path && location.pathname === path && label === 'Dashboard' ? location.pathname === '/dashboard' : !!path && location.pathname === path && label !== 'My Agents'}
-            onClick={() => path && navigate(path)}
-          />
-        ))}
-      </nav>
-
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px', borderRadius: 12, background: T.s50 }}>
-        <div style={{ width: 34, height: 34, borderRadius: 99, background: `linear-gradient(135deg,${T.b500},${T.v600})`, flexShrink: 0 }} />
-        <div>
-          <div style={{ fontSize: 13, fontWeight: 700, color: T.s900 }}>Your Business</div>
-          <div style={{ fontSize: 11, color: T.s400 }}>Free plan</div>
+    <>
+      <style>{`@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,200..800&display=swap');`}</style>
+      <aside style={{
+        width: 228, height: '100vh', position: 'sticky', top: 0, flexShrink: 0,
+        background: T.surface, borderRight: `1px solid ${T.border}`,
+        display: 'flex', flexDirection: 'column', padding: '24px 14px',
+        fontFamily: font,
+      }}>
+        <div style={{ padding: '4px 6px', marginBottom: 36, cursor: 'pointer' }} onClick={() => navigate('/')}>
+          <Logo />
         </div>
-      </div>
-    </aside>
+
+        <nav style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 2 }}>
+          {NAV_ITEMS.map(({ label, icon, path }) => (
+            <NavItem
+              key={label}
+              label={label}
+              icon={icon}
+              active={!!path && location.pathname === path}
+              onClick={() => path && navigate(path)}
+            />
+          ))}
+        </nav>
+
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 10,
+          padding: '10px 12px', borderRadius: 12,
+          background: T.surfaceAlt,
+          borderTop: `1px solid ${T.border}`,
+          marginTop: 8,
+        }}>
+          <div style={{
+            width: 34, height: 34, borderRadius: 99,
+            background: T.forest, flexShrink: 0,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}>
+            <svg width={16} height={16} viewBox="0 0 24 24" fill="none"
+              stroke="white" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="8" r="4" />
+              <path d="M4 20c0-4 3.6-7 8-7s8 3 8 7" />
+            </svg>
+          </div>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: T.ink, fontFamily: font, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              Your Business
+            </div>
+            <div style={{ fontSize: 11, color: T.muted, fontFamily: font }}>Free plan</div>
+          </div>
+        </div>
+      </aside>
+    </>
   );
 };
 

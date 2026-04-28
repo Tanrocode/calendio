@@ -1,5 +1,5 @@
-from pathlib import Path
-from typing import Optional
+import time
+from typing import Dict, Optional, Tuple
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse
@@ -15,26 +15,33 @@ os.environ.setdefault('OAUTHLIB_INSECURE_TRANSPORT', '1')
 
 router = APIRouter(tags=['google-oauth'])
 
-BACKEND_DIR = Path(__file__).resolve().parent.parent
-_CREDENTIALS_CANDIDATES = [
-    BACKEND_DIR / 'credentials.json',
-    BACKEND_DIR / 'agents' / 'credentials.json',
+FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:3000')
+SCOPES = [
+    'https://www.googleapis.com/auth/calendar.events',
+    'https://www.googleapis.com/auth/calendar.readonly',
 ]
-
-
-def _credentials_path() -> Path:
-    for p in _CREDENTIALS_CANDIDATES:
-        if p.is_file():
-            return p
-    return _CREDENTIALS_CANDIDATES[0]
-
-
-FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://127.0.0.1:3000')
-SCOPES = ['https://www.googleapis.com/auth/calendar.events']
-# Port in redirect URIs must match where you run uvicorn (default 8000).
 API_PORT = int(os.getenv('API_PORT', os.getenv('FLASK_PORT', '8000')))
 REDIRECT_LOCALHOST = f'http://localhost:{API_PORT}/oauth/callback'
 REDIRECT_127 = f'http://127.0.0.1:{API_PORT}/oauth/callback'
+
+# Keyed by OAuth state — avoids session cookie host-mismatch for PKCE
+_OAUTH_PENDING: Dict[str, Tuple[dict, float]] = {}
+_OAUTH_TTL = 300  # seconds
+
+
+def _pending_store(state: str, data: dict) -> None:
+    _OAUTH_PENDING[state] = (data, time.monotonic())
+    cutoff = time.monotonic() - _OAUTH_TTL
+    for k in [k for k, (_, ts) in _OAUTH_PENDING.items() if ts < cutoff]:
+        del _OAUTH_PENDING[k]
+
+
+def _pending_pop(state: str) -> Optional[dict]:
+    entry = _OAUTH_PENDING.pop(state, None)
+    if not entry:
+        return None
+    data, ts = entry
+    return data if time.monotonic() - ts <= _OAUTH_TTL else None
 
 
 class AddEventBody(BaseModel):
@@ -46,18 +53,26 @@ class AddEventBody(BaseModel):
 
 def _redirect_uri_and_frontend_for_request(request: Request):
     origin = (request.headers.get('origin') or '').rstrip('/')
-    if origin == 'http://localhost:3000':
-        return REDIRECT_LOCALHOST, 'http://localhost:3000'
-    if origin == 'http://127.0.0.1:3000':
+    referer = request.headers.get('referer') or ''
+    hint = origin or referer
+    if '127.0.0.1' in hint:
         return REDIRECT_127, 'http://127.0.0.1:3000'
-    return REDIRECT_127, FRONTEND_URL.rstrip('/')
+    return REDIRECT_LOCALHOST, 'http://localhost:3000'
 
 
 def get_flow(redirect_uri: str) -> Flow:
-    return Flow.from_client_secrets_file(
-        str(_credentials_path()),
-        scopes=SCOPES,
-        redirect_uri=redirect_uri,
+    client_config = {
+        'web': {
+            'client_id': os.getenv('GOOGLE_CLIENT_ID'),
+            'client_secret': os.getenv('GOOGLE_CLIENT_SECRET'),
+            'auth_uri': 'https://accounts.google.com/o/oauth2/auth',
+            'token_uri': 'https://oauth2.googleapis.com/token',
+            'redirect_uris': [redirect_uri],
+        }
+    }
+    return Flow.from_client_config(
+        client_config, scopes=SCOPES, redirect_uri=redirect_uri,
+        autogenerate_code_verifier=True,
     )
 
 
@@ -84,13 +99,39 @@ def _safe_oauth_next_path(next: Optional[str]) -> str:
 @router.get('/auth/url')
 def auth_url(request: Request, next: Optional[str] = Query(None)):
     redirect_uri, frontend = _redirect_uri_and_frontend_for_request(request)
-    request.session['oauth_redirect_uri'] = redirect_uri
-    request.session['frontend_origin'] = frontend
-    request.session['oauth_next_path'] = _safe_oauth_next_path(next)
     flow = get_flow(redirect_uri)
-    url, state = flow.authorization_url(access_type='offline')
-    request.session['state'] = state
+    url, state = flow.authorization_url(access_type='offline', prompt='consent')
+    _pending_store(state, {
+        'code_verifier': flow.code_verifier,
+        'redirect_uri': redirect_uri,
+        'frontend': frontend,
+        'next_path': _safe_oauth_next_path(next),
+    })
     return {'url': url}
+
+
+@router.get('/oauth/callback')
+def callback(request: Request):
+    try:
+        state = request.query_params.get('state', '')
+        pending = _pending_pop(state)
+        if not pending:
+            raise HTTPException(status_code=400, detail='OAuth state not found or expired')
+        redirect_uri = pending['redirect_uri']
+        flow = get_flow(redirect_uri)
+        flow.code_verifier = pending['code_verifier']
+        flow.oauth2session._state = state
+        flow.fetch_token(authorization_response=str(request.url))
+        credentials = flow.credentials
+        request.session['token'] = credentials.token
+        request.session['refresh_token'] = credentials.refresh_token
+        front = pending['frontend']
+        next_path = _safe_oauth_next_path(pending['next_path'])
+        return RedirectResponse(url=f'{front}{next_path}')
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get('/test-add-event')
@@ -98,46 +139,6 @@ def test_add_event(request: Request):
     if 'token' not in request.session:
         raise HTTPException(status_code=401, detail='Not authenticated')
     return {'token_exists': True, 'token': request.session['token']}
-
-
-@router.get('/oauth/callback')
-def callback(request: Request):
-    try:
-        redirect_uri = request.session.get('oauth_redirect_uri') or REDIRECT_127
-        flow = get_flow(redirect_uri)
-        flow.fetch_token(authorization_response=str(request.url))
-        credentials = flow.credentials
-        request.session['token'] = credentials.token
-        request.session['refresh_token'] = credentials.refresh_token
-        front = request.session.get('frontend_origin') or FRONTEND_URL.rstrip('/')
-        next_path = request.session.pop('oauth_next_path', None) or '/dashboard'
-        next_path = _safe_oauth_next_path(next_path)
-        return RedirectResponse(url=f'{front}{next_path}')
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get('/test-create-event')
-def test_create_event(request: Request):
-    if 'token' not in request.session:
-        raise HTTPException(status_code=401, detail='Not authenticated')
-
-    creds = _build_credentials(request)
-    service = build('calendar', 'v3', credentials=creds)
-    event = {
-        'summary': 'Test Event',
-        'description': 'Hello',
-        'start': {
-            'dateTime': '2026-03-10T10:00:00',
-            'timeZone': 'America/Los_Angeles',
-        },
-        'end': {
-            'dateTime': '2026-03-10T11:00:00',
-            'timeZone': 'America/Los_Angeles',
-        },
-    }
-    created_event = service.events().insert(calendarId='primary', body=event).execute()
-    return {'success': True, 'link': created_event.get('htmlLink')}
 
 
 @router.post('/add-event')

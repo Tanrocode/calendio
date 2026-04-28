@@ -3,23 +3,37 @@ import { useNavigate } from 'react-router-dom';
 import { authCallbackUrl, supabase } from '../lib/supabaseClient';
 
 const T = {
-  b50: '#eff6ff', b100: '#dbeafe', b600: '#2563eb', b700: '#1d4ed8',
-  s100: '#f1f5f9', s200: '#e2e8f0', s400: '#94a3b8', s500: '#64748b', s900: '#0f172a',
+  forest:       '#1d8c63',
+  forestDeep:   '#177350',
+  forestSoft:   '#ecfdf5',
+  ink:          '#111827',
+  body:         '#374151',
+  secondary:    '#6b7280',
+  muted:        '#9ca3af',
+  border:       '#e5e7eb',
+  borderStrong: '#d1d5db',
+  surfaceAlt:   '#f9fafb',
+  bg:           '#ffffff',
+  surface:      '#ffffff',
 };
+
+const font = "'Bricolage Grotesque', sans-serif";
 
 const Logo: React.FC = () => (
   <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
     <svg width={36} height={36} viewBox="0 0 40 40" fill="none">
-      <rect width="40" height="40" rx="11" fill={T.b600} />
-      <rect x="10" y="13" width="20" height="15" rx="3" fill="none" stroke="white" strokeWidth="1.6" />
-      <line x1="10" y1="18" x2="30" y2="18" stroke="white" strokeWidth="1.6" />
-      <line x1="15.5" y1="13" x2="15.5" y2="10.5" stroke="white" strokeWidth="1.8" strokeLinecap="round" />
-      <line x1="24.5" y1="13" x2="24.5" y2="10.5" stroke="white" strokeWidth="1.8" strokeLinecap="round" />
-      <circle cx="15.5" cy="23" r="1.5" fill="white" />
-      <circle cx="20" cy="22" r="1.5" fill="white" />
-      <circle cx="24.5" cy="24" r="1.5" fill="white" />
+      <rect width="40" height="40" rx="11" fill={T.forest} />
+      <rect x="7" y="13" width="26" height="19" rx="3" stroke="white" strokeWidth="1.6" fill="none" />
+      <line x1="7" y1="19" x2="33" y2="19" stroke="white" strokeWidth="1.6" />
+      <path d="M14 10 L14 16" stroke="white" strokeWidth="2.2" strokeLinecap="round" />
+      <path d="M26 10 L26 16" stroke="white" strokeWidth="2.2" strokeLinecap="round" />
+      <rect x="11" y="24.5" width="4" height="5.5" rx="2" fill="white" />
+      <rect x="18" y="20.5" width="5" height="9.5" rx="2.5" fill="white" />
+      <rect x="25.5" y="22.5" width="4" height="7.5" rx="2" fill="white" />
     </svg>
-    <span style={{ fontSize: 22, fontWeight: 800, color: T.s900, letterSpacing: '-0.5px' }}>Calendio</span>
+    <span style={{ fontSize: 22, fontWeight: 800, color: T.ink, letterSpacing: '-0.5px', fontFamily: font }}>
+      Calendio
+    </span>
   </div>
 );
 
@@ -58,67 +72,82 @@ const AuthPage: React.FC = () => {
   };
 
   return (
-    <div style={{
-      fontFamily: 'Plus Jakarta Sans, sans-serif',
-      minHeight: '100vh',
-      background: `radial-gradient(ellipse 80% 50% at 50% -10%, ${T.b100} 0%, #fff 60%)`,
-      display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-      padding: 24,
-    }}>
-      <div style={{ marginBottom: 40 }}>
-        <Logo />
-      </div>
-
+    <>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,200..800&display=swap');
+        *, *::before, *::after { box-sizing: border-box; }
+        body { background: #f8faf9; -webkit-font-smoothing: antialiased; }
+      `}</style>
       <div style={{
-        background: '#fff', border: `1px solid ${T.s200}`,
-        borderRadius: 24, padding: '44px 40px',
-        width: '100%', maxWidth: 420,
-        boxShadow: '0 8px 40px rgba(15,23,42,0.08)',
+        fontFamily: font, minHeight: '100vh', background: T.bg,
+        display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+        padding: 24,
       }}>
-        <h1 style={{ fontSize: 26, fontWeight: 800, color: T.s900, marginBottom: 8, letterSpacing: '-0.5px', marginTop: 0 }}>
-          Welcome back
-        </h1>
-        <p style={{ fontSize: 15, color: T.s500, marginBottom: 32, lineHeight: 1.65, marginTop: 0 }}>
-          Sign in to your Calendio account to manage your voice agents.
-        </p>
+        <div style={{ marginBottom: 36 }}>
+          <Logo />
+        </div>
 
-        {error && (
-          <div style={{ background: '#fef2f2', border: '1px solid #fecaca', color: '#991b1b', borderRadius: 10, padding: '10px 14px', fontSize: 13, marginBottom: 20 }}>
-            {error}
-          </div>
-        )}
+        <div style={{
+          background: T.surface, border: `1px solid ${T.border}`,
+          borderRadius: 20, padding: '44px 40px',
+          width: '100%', maxWidth: 400,
+          boxShadow: '0 4px 24px rgba(25,21,16,0.08)',
+        }}>
+          <h1 style={{
+            fontSize: 24, fontWeight: 800, color: T.ink,
+            marginBottom: 8, letterSpacing: '-0.5px', marginTop: 0, fontFamily: font,
+          }}>
+            Welcome back
+          </h1>
+          <p style={{
+            fontSize: 15, color: T.secondary, marginBottom: 32,
+            lineHeight: 1.65, marginTop: 0, fontFamily: font,
+          }}>
+            Sign in to manage your voice agents.
+          </p>
 
-        <button
-          type="button"
-          disabled={loading}
-          onClick={handleGoogle}
-          onMouseEnter={() => setBtnHover(true)}
-          onMouseLeave={() => setBtnHover(false)}
-          style={{
-            width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
-            padding: '13px', background: btnHover ? T.s100 : '#fff', color: T.s900,
-            border: `1.5px solid ${btnHover ? T.s200 : T.s200}`,
-            borderRadius: 12, fontSize: 15, fontWeight: 700,
-            fontFamily: 'Plus Jakarta Sans, sans-serif',
-            cursor: loading ? 'wait' : 'pointer',
-            transition: 'all 0.15s',
-            boxShadow: btnHover ? '0 2px 8px rgba(15,23,42,0.06)' : 'none',
-          }}
-        >
-          <GoogleIcon />
-          {loading ? 'Redirecting…' : 'Continue with Google'}
-        </button>
+          {error && (
+            <div style={{
+              background: '#fef5f5', border: '1px solid #f5c6c6', color: '#8b2020',
+              borderRadius: 10, padding: '10px 14px', fontSize: 13, marginBottom: 20, fontFamily: font,
+            }}>
+              {error}
+            </div>
+          )}
 
-        <p style={{ textAlign: 'center', fontSize: 13, color: T.s400, marginBottom: 0, marginTop: 24 }}>
-          <span
-            onClick={() => navigate('/')}
-            style={{ color: T.b600, fontWeight: 600, cursor: 'pointer', textDecoration: 'none' }}
+          <button
+            type="button"
+            disabled={loading}
+            onClick={handleGoogle}
+            onMouseEnter={() => setBtnHover(true)}
+            onMouseLeave={() => setBtnHover(false)}
+            style={{
+              width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
+              padding: '13px',
+              background: btnHover ? T.surfaceAlt : T.surface,
+              color: T.ink,
+              border: `1.5px solid ${btnHover ? T.borderStrong : T.border}`,
+              borderRadius: 12, fontSize: 15, fontWeight: 700, fontFamily: font,
+              cursor: loading ? 'wait' : 'pointer',
+              transition: 'all 0.15s cubic-bezier(0.22,1,0.36,1)',
+              boxShadow: btnHover ? '0 2px 8px rgba(25,21,16,0.08)' : 'none',
+            }}
           >
-            ← Back to home
-          </span>
-        </p>
+            <GoogleIcon />
+            {loading ? 'Redirecting…' : 'Continue with Google'}
+          </button>
+
+          <p style={{ textAlign: 'center', fontSize: 13, color: T.muted, marginBottom: 0, marginTop: 24, fontFamily: font }}>
+            <span
+              onClick={() => navigate('/')}
+              style={{ color: T.forest, fontWeight: 600, cursor: 'pointer' }}
+            >
+              ← Back to home
+            </span>
+          </p>
+        </div>
       </div>
-    </div>
+    </>
   );
 };
 
