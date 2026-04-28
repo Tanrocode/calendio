@@ -66,9 +66,13 @@ export const createAgent = async (data: {
   return res.data;
 };
 
-export const chatWithAgent = async (agentId: number, message: string): Promise<{ reply: string }> => {
+export const chatWithAgent = async (
+  agentId: number,
+  message: string,
+  history: { role: string; content: string }[] = [],
+): Promise<{ reply: string }> => {
   const headers = await getAuthHeaders();
-  const res = await axios.post(`/agents/${agentId}/chat`, { message }, { headers });
+  const res = await axios.post(`/agents/${agentId}/chat`, { message, history }, { headers, withCredentials: true });
   return res.data;
 };
 
