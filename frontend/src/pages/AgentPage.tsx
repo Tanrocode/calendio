@@ -4,81 +4,47 @@ import { getAgent, deleteAgent, chatWithAgent, getCalendarStatus, getCalendarAut
 import type { AgentConfig } from '../services/api';
 import Sidebar from '../components/Sidebar';
 
-const T = {
-  forest:       '#1d8c63',
-  forestDeep:   '#177350',
-  forestSoft:   '#ecfdf5',
-  ink:          '#111827',
-  body:         '#374151',
-  secondary:    '#6b7280',
-  muted:        '#9ca3af',
-  border:       '#e5e7eb',
-  borderStrong: '#d1d5db',
-  surfaceAlt:   '#f9fafb',
-  bg:           '#ffffff',
-  surface:      '#ffffff',
-  green:        '#1d8c63',
-  greenSoft:    '#ecfdf5',
+/* ── ICONS ── */
+const Ic = {
+  Back: () => <svg width="13" height="13" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7"/></svg>,
+  Send: () => <svg width="13" height="13" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/></svg>,
+  Phone: () => <svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8"><path strokeLinecap="round" strokeLinejoin="round" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.948V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 7V5z"/></svg>,
+  Cal: () => <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>,
 };
 
-const font = "'Bricolage Grotesque', sans-serif";
-
-const MicIcon: React.FC<{ size?: number; color?: string }> = ({ size = 18, color = 'currentColor' }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
-    stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-    <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z" />
-    <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-    <line x1="12" y1="19" x2="12" y2="22" />
+/* ── SVG LOGOS ── */
+const LogoGCal = () => (
+  <svg viewBox="0 0 24 24" fill="none" width="14" height="14">
+    <rect x="3.5" y="3.5" width="17" height="17" rx="2" fill="white" stroke="#E0E0E0" strokeWidth="0.5"/>
+    <path d="M8.5 3.5v4M15.5 3.5v4" stroke="#4285F4" strokeWidth="1.5" strokeLinecap="round"/>
+    <rect x="3.5" y="7" width="17" height="2.5" fill="#4285F4"/>
+    <text x="12" y="17.5" textAnchor="middle" fontSize="7" fontWeight="700" fill="#4285F4" fontFamily="sans-serif">31</text>
   </svg>
 );
 
-const ChevLeft: React.FC = () => (
-  <svg width={14} height={14} viewBox="0 0 24 24" fill="none"
-    stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-    <path d="M15 18l-6-6 6-6" />
-  </svg>
-);
-
-const SendIcon: React.FC = () => (
-  <svg width={15} height={15} viewBox="0 0 24 24" fill="none"
-    stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-    <line x1="22" y1="2" x2="11" y2="13" />
-    <polygon points="22 2 15 22 11 13 2 9 22 2" />
-  </svg>
-);
-
-const StatusBadge: React.FC<{ active: boolean }> = ({ active }) => (
+/* ── STATUS PILL ── */
+const StatusPill: React.FC<{ active: boolean }> = ({ active }) => (
   <div style={{
-    display: 'inline-flex', alignItems: 'center', gap: 6,
-    padding: '5px 12px', borderRadius: 99,
-    background: active ? T.greenSoft : T.surfaceAlt,
-    border: `1px solid ${active ? '#a8dfc8' : T.border}`,
+    display: 'inline-flex', alignItems: 'center', gap: 5,
+    fontSize: 11, fontWeight: 600, padding: '3px 9px', borderRadius: 100,
+    background: active ? 'var(--green-light)' : '#F3F4F6',
+    color: active ? 'var(--green)' : '#6B7280',
   }}>
     <div style={{
-      width: 7, height: 7, borderRadius: 99,
-      background: active ? T.green : T.muted,
-      boxShadow: active ? '0 0 0 2px rgba(42,157,114,0.22)' : 'none',
+      width: 5, height: 5, borderRadius: '50%',
+      background: active ? 'var(--green)' : '#9CA3AF',
+      animation: active ? 'pip-pulse 2s ease-in-out infinite' : 'none',
     }} />
-    <span style={{ fontSize: 12, fontWeight: 700, color: active ? '#1a6647' : T.muted, fontFamily: font }}>
-      {active ? 'Active' : 'Inactive'}
-    </span>
+    {active ? 'Active' : 'Inactive'}
   </div>
 );
 
-const InfoBlock: React.FC<{ label: string; value?: string | null }> = ({ label, value }) =>
-  value ? (
-    <div style={{ marginBottom: 24 }}>
-      <div style={{ fontSize: 11, fontWeight: 700, color: T.muted, textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 6, fontFamily: font }}>{label}</div>
-      <div style={{ fontSize: 14, color: T.body, lineHeight: 1.7, fontWeight: 500, fontFamily: font }}>{value}</div>
-    </div>
-  ) : null;
-
+/* ── TYPING INDICATOR ── */
 const TypingIndicator: React.FC = () => (
-  <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '10px 14px', background: T.surfaceAlt, borderRadius: '18px 18px 18px 4px', width: 'fit-content' }}>
+  <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '10px 14px', background: 'white', border: '1px solid var(--border)', borderRadius: 14, borderBottomLeftRadius: 4, width: 'fit-content' }}>
     {[0, 1, 2].map(i => (
-      <div key={i} style={{ width: 6, height: 6, borderRadius: 99, background: T.muted, animation: `typingDot 1.2s ${i * 0.2}s cubic-bezier(0.22,1,0.36,1) infinite` }} />
+      <div key={i} style={{ width: 5, height: 5, background: 'var(--text-soft)', borderRadius: '50%', animation: `tdot 1.4s ease-in-out infinite`, animationDelay: `${i * 0.2}s` }} />
     ))}
-    <style>{`@keyframes typingDot { 0%,80%,100%{transform:translateY(0);opacity:0.5} 40%{transform:translateY(-5px);opacity:1} }`}</style>
   </div>
 );
 
@@ -89,184 +55,175 @@ const QUICK_PROMPTS = [
   "Can I reschedule my appointment?",
 ];
 
-type Message = { role: 'user' | 'assistant'; content: string };
+type Message = { role: 'user' | 'assistant'; content: string; t: string };
 
-const ConvoTester: React.FC<{ agent: AgentConfig; calendarConnected: boolean | null }> = ({ agent, calendarConnected }) => {
-  const [messages, setMessages] = useState<Message[]>([]);
+/* ── RIGHT PANEL / CHAT ── */
+const RightPanel: React.FC<{ agent: AgentConfig; calendarConnected: boolean | null }> = ({ agent, calendarConnected }) => {
+  const [msgs, setMsgs] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
-  const [started, setStarted] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  const init = agent.name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
+  const isEmpty = msgs.length === 0 && !loading;
 
   useEffect(() => {
     if (bottomRef.current) {
       const el = bottomRef.current.parentElement!;
       el.scrollTop = el.scrollHeight;
     }
-  }, [messages, loading]);
+  }, [msgs, loading]);
 
-  const send = async (text: string) => {
-    if (!text.trim() || loading) return;
-    const userMsg: Message = { role: 'user', content: text.trim() };
-    const newMessages = [...messages, userMsg];
-    setMessages(newMessages);
+  const send = async (text?: string) => {
+    const msg = text || input.trim();
+    if (!msg || loading) return;
+    const t = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const newMsgs = [...msgs, { role: 'user' as const, content: msg, t }];
+    setMsgs(newMsgs);
     setInput('');
     setLoading(true);
-    setStarted(true);
-
     try {
-      const data = await chatWithAgent(agent.id, text.trim(), messages);
-      setMessages(prev => [...prev, { role: 'assistant', content: data.reply }]);
+      const data = await chatWithAgent(agent.id, msg, msgs.map(m => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.content })));
+      setMsgs(prev => [...prev, { role: 'assistant', content: data.reply, t: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }]);
     } catch {
-      setMessages(prev => [...prev, { role: 'assistant', content: "Sorry, I'm having a little trouble right now. Could you try again in a moment?" }]);
+      setMsgs(prev => [...prev, { role: 'assistant', content: "Sorry, I'm having a little trouble right now. Could you try again in a moment?", t: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }]);
     }
     setLoading(false);
     inputRef.current?.focus();
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: T.surface, border: `1px solid ${T.border}`, borderRadius: 20, overflow: 'hidden' }}>
-      {/* Header */}
-      <div style={{ padding: '18px 24px', borderBottom: `1px solid ${T.border}`, display: 'flex', alignItems: 'center', gap: 12 }}>
-        <div style={{ width: 40, height: 40, borderRadius: 99, background: T.forest, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-          <MicIcon color="#fff" size={18} />
-        </div>
+    <div style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', background: 'var(--page-bg)' }}>
+      {/* Chat topbar */}
+      <div style={{ background: 'white', borderBottom: '1px solid var(--border)', padding: '12px 48px', display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0 }}>
+        <div style={{ width: 32, height: 32, background: 'var(--plum)', borderRadius: 8, color: 'white', fontSize: 11, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{init}</div>
         <div>
-          <div style={{ fontSize: 14, fontWeight: 800, color: T.ink, fontFamily: font }}>{agent.name}</div>
-          <div style={{ fontSize: 12, color: T.muted, fontWeight: 500, fontFamily: font }}>Simulates how your agent responds to real customers</div>
+          <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-dark)' }}>{agent.name}</div>
+          <div style={{ fontSize: 11, color: 'var(--text-soft)', marginTop: 1 }}>Simulates how your agent responds to real customers</div>
         </div>
-        {started && (
-          <button
-            onClick={() => { setMessages([]); setStarted(false); }}
-            onMouseEnter={e => { e.currentTarget.style.background = T.surfaceAlt; e.currentTarget.style.color = T.body; }}
-            onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = T.muted; }}
-            style={{ marginLeft: 'auto', fontSize: 12, fontWeight: 700, color: T.muted, background: 'none', border: 'none', cursor: 'pointer', padding: '6px 12px', borderRadius: 8, transition: 'all 0.12s', fontFamily: font }}
-          >
-            Clear chat
-          </button>
-        )}
+        <div style={{ marginLeft: 'auto' }}>
+          <StatusPill active={true} />
+        </div>
       </div>
 
-      {/* Messages */}
-      <div style={{ flex: 1, overflowY: 'auto', padding: '24px 24px 16px' }}>
-        {!calendarConnected && (
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 12, paddingBottom: 16 }}>
-            <div style={{ width: 48, height: 48, borderRadius: 14, background: T.surfaceAlt, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <svg width={22} height={22} viewBox="0 0 24 24" fill="none" stroke={T.muted} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-                <rect x="3" y="11" width="18" height="11" rx="2" ry="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" />
+      {/* Chat body */}
+      <div style={{ flex: 1, overflowY: 'auto', padding: '24px 32px', display: 'flex', flexDirection: 'column' }}>
+        {!calendarConnected ? (
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 16, paddingBottom: 32 }}>
+            <div style={{ width: 52, height: 52, background: 'white', border: '1px solid var(--border)', borderRadius: 14, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 2px 8px rgba(59,7,100,0.06)' }}>
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--text-soft)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
               </svg>
             </div>
             <div style={{ textAlign: 'center' }}>
-              <div style={{ fontSize: 15, fontWeight: 700, color: T.ink, marginBottom: 6, fontFamily: font }}>Google Calendar required</div>
-              <div style={{ fontSize: 13, color: T.secondary, maxWidth: 260, lineHeight: 1.6, fontFamily: font }}>
-                Connect your Google Calendar using the panel on the left to start testing your agent.
-              </div>
+              <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-dark)', letterSpacing: '-0.02em' }}>Google Calendar required</div>
+              <div style={{ fontSize: 12, color: 'var(--text-soft)', maxWidth: 300, lineHeight: 1.6, marginTop: 6 }}>Connect your Google Calendar using the panel on the left to start testing.</div>
             </div>
           </div>
-        )}
-
-        {calendarConnected && !started && (
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 24, paddingBottom: 16 }}>
-            <div style={{ textAlign: 'center' }}>
-              <div style={{ width: 48, height: 48, borderRadius: 14, background: T.forestSoft, display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 14px' }}>
-                <MicIcon size={22} color={T.forest} />
-              </div>
-              <div style={{ fontSize: 15, fontWeight: 700, color: T.ink, marginBottom: 6, fontFamily: font }}>Start a test call</div>
-              <div style={{ fontSize: 13, color: T.secondary, maxWidth: 280, lineHeight: 1.6, fontFamily: font }}>
-                Type as if you're a customer calling in. See how your agent responds.
-              </div>
+        ) : isEmpty ? (
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 16, paddingBottom: 32 }}>
+            <div style={{ width: 52, height: 52, background: 'white', border: '1px solid var(--border)', borderRadius: 14, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 2px 8px rgba(59,7,100,0.06)' }}>
+              <Ic.Phone />
             </div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, justifyContent: 'center', maxWidth: 380 }}>
-              {QUICK_PROMPTS.map(q => (
-                <button key={q} onClick={() => send(q)}
-                  onMouseEnter={e => { e.currentTarget.style.background = T.forestSoft; e.currentTarget.style.borderColor = T.forest; e.currentTarget.style.color = T.forest; }}
-                  onMouseLeave={e => { e.currentTarget.style.background = T.bg; e.currentTarget.style.borderColor = T.border; e.currentTarget.style.color = T.secondary; }}
-                  style={{ padding: '8px 14px', background: T.bg, border: `1px solid ${T.border}`, borderRadius: 99, fontSize: 13, fontWeight: 600, color: T.secondary, cursor: 'pointer', transition: 'all 0.12s', fontFamily: font }}>
-                  {q}
-                </button>
+            <div>
+              <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-dark)', letterSpacing: '-0.02em', textAlign: 'center' }}>Start a test call</div>
+              <div style={{ fontSize: 12, color: 'var(--text-soft)', textAlign: 'center', lineHeight: 1.6, maxWidth: 300, marginTop: 6 }}>Type as if you're a customer calling in. See how your agent responds.</div>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, width: '100%', maxWidth: 440 }}>
+              {QUICK_PROMPTS.map(s => (
+                <button key={s} onClick={() => send(s)} style={{
+                  background: 'white', border: '1px solid var(--border)', borderRadius: 8,
+                  padding: '10px 14px', fontSize: 12, fontWeight: 500, color: 'var(--text-mid)',
+                  cursor: 'pointer', textAlign: 'left', fontFamily: 'var(--font-ui)',
+                  transition: 'background 0.12s, border-color 0.12s, color 0.12s',
+                }}
+                  onMouseEnter={e => { const el = e.currentTarget; el.style.background = 'var(--lavender-mid)'; el.style.borderColor = 'var(--plum-xlight)'; el.style.color = 'var(--plum)'; }}
+                  onMouseLeave={e => { const el = e.currentTarget; el.style.background = 'white'; el.style.borderColor = 'var(--border)'; el.style.color = 'var(--text-mid)'; }}
+                >{s}</button>
               ))}
             </div>
           </div>
-        )}
-
-        {started && messages.map((m, i) => (
-          <div key={i} style={{ display: 'flex', justifyContent: m.role === 'user' ? 'flex-end' : 'flex-start', marginBottom: 12 }}>
-            {m.role === 'assistant' && (
-              <div style={{ width: 28, height: 28, borderRadius: 99, background: T.forest, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginRight: 8, marginTop: 2 }}>
-                <MicIcon color="#fff" size={12} />
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14, maxWidth: 640, width: '100%', margin: '0 auto' }}>
+            {msgs.map((m, i) => (
+              <div key={i} style={{ display: 'flex', gap: 10, alignItems: 'flex-end', flexDirection: m.role === 'user' ? 'row-reverse' : 'row' }}>
+                <div style={{ width: 26, height: 26, borderRadius: '50%', background: m.role === 'assistant' ? 'var(--plum)' : 'var(--text-soft)', color: 'white', fontSize: 9, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                  {m.role === 'assistant' ? init : 'You'}
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', maxWidth: '72%' }}>
+                  <div style={{
+                    padding: '10px 14px', borderRadius: 14, fontSize: 13, lineHeight: 1.55,
+                    ...(m.role === 'assistant'
+                      ? { background: 'white', border: '1px solid var(--border)', color: 'var(--text-dark)', borderBottomLeftRadius: 4 }
+                      : { background: 'var(--plum)', color: 'white', borderBottomRightRadius: 4 })
+                  }}>
+                    {m.content}
+                  </div>
+                  <div style={{ fontSize: 10, color: 'var(--text-soft)', marginTop: 3, padding: '0 2px', textAlign: m.role === 'user' ? 'right' : 'left' }}>{m.t}</div>
+                </div>
+              </div>
+            ))}
+            {loading && (
+              <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end' }}>
+                <div style={{ width: 26, height: 26, borderRadius: '50%', background: 'var(--plum)', color: 'white', fontSize: 9, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{init}</div>
+                <TypingIndicator />
               </div>
             )}
-            <div style={{
-              maxWidth: '72%', padding: '11px 16px',
-              borderRadius: m.role === 'user' ? '18px 18px 4px 18px' : '18px 18px 18px 4px',
-              background: m.role === 'user' ? T.forest : T.surfaceAlt,
-              color: m.role === 'user' ? '#fff' : T.body,
-              fontSize: 14, lineHeight: 1.6, fontWeight: 500, fontFamily: font,
-            }}>
-              {m.content}
-            </div>
-          </div>
-        ))}
-
-        {loading && (
-          <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8, marginBottom: 12 }}>
-            <div style={{ width: 28, height: 28, borderRadius: 99, background: T.forest, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-              <MicIcon color="#fff" size={12} />
-            </div>
-            <TypingIndicator />
+            <div ref={bottomRef} />
           </div>
         )}
-        <div ref={bottomRef} />
       </div>
 
-      {/* Input */}
-      <div style={{ padding: '12px 16px', borderTop: `1px solid ${T.border}`, display: 'flex', gap: 8, opacity: calendarConnected ? 1 : 0.45, pointerEvents: calendarConnected ? 'auto' : 'none' }}>
-        <input
-          ref={inputRef}
-          value={input}
-          onChange={e => setInput(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(input); } }}
-          placeholder={calendarConnected ? 'Type as a caller…' : 'Connect Google Calendar to start…'}
-          style={{ flex: 1, padding: '11px 16px', border: `1.5px solid ${T.border}`, borderRadius: 12, fontSize: 14, outline: 'none', fontFamily: font, color: T.ink, background: T.bg, transition: 'border-color 0.15s' }}
-          onFocus={e => (e.target.style.borderColor = T.forest)}
-          onBlur={e => (e.target.style.borderColor = T.border)}
-        />
-        <button
-          onClick={() => send(input)}
-          disabled={!input.trim() || loading || !calendarConnected}
-          onMouseEnter={e => { if (input.trim() && !loading) e.currentTarget.style.background = T.forestDeep; }}
-          onMouseLeave={e => { e.currentTarget.style.background = T.forest; }}
-          style={{ padding: '11px 18px', background: T.forest, color: '#fff', border: 'none', borderRadius: 12, fontWeight: 700, fontSize: 14, cursor: (!input.trim() || loading || !calendarConnected) ? 'not-allowed' : 'pointer', opacity: (!input.trim() || loading) ? 0.5 : 1, transition: 'all 0.15s', fontFamily: font, display: 'flex', alignItems: 'center', gap: 6 }}>
-          <SendIcon /> Send
+      {/* Input bar */}
+      <div style={{ background: 'white', borderTop: '1px solid var(--border)', padding: '12px 48px', display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, opacity: calendarConnected ? 1 : 0.4, pointerEvents: calendarConnected ? 'auto' : 'none' }}>
+        <div style={{ flex: 1, background: 'var(--lavender-bg)', border: '1px solid var(--lavender-dark)', borderRadius: 8, display: 'flex', alignItems: 'center', padding: '0 12px', transition: 'border-color 0.15s' }}
+          onFocus={e => (e.currentTarget.style.borderColor = 'var(--plum-xlight)')}
+          onBlur={e => (e.currentTarget.style.borderColor = 'var(--lavender-dark)')}
+        >
+          <input
+            ref={inputRef}
+            value={input}
+            onChange={e => setInput(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') send(); }}
+            placeholder={calendarConnected ? 'Type as a caller…' : 'Connect Google Calendar to start…'}
+            style={{ flex: 1, background: 'none', border: 'none', outline: 'none', fontSize: 13, fontFamily: 'var(--font-ui)', color: 'var(--text-dark)', padding: '10px 0' }}
+          />
+        </div>
+        <button onClick={() => send()} disabled={!input.trim() && msgs.length > 0} style={{
+          background: 'var(--plum)', color: 'white', border: 'none', borderRadius: 8,
+          padding: '9px 16px', fontSize: 13, fontWeight: 600, fontFamily: 'var(--font-ui)',
+          cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6,
+          transition: 'background 0.15s', opacity: (!input.trim() && msgs.length > 0) ? 0.4 : 1,
+        }}
+          onMouseEnter={e => (e.currentTarget.style.background = 'var(--plum-mid)')}
+          onMouseLeave={e => (e.currentTarget.style.background = 'var(--plum)')}
+        >
+          <Ic.Send /> Send
         </button>
       </div>
     </div>
   );
 };
 
-/* ── Agent Page ─────────────────────────────────── */
+/* ── AGENT PAGE ── */
 const AgentPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [agent, setAgent] = useState<AgentConfig | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(false);
+  const [pageError, setPageError] = useState(false);
   const [calendarConnected, setCalendarConnected] = useState<boolean | null>(null);
   const [calendarLoading, setCalendarLoading] = useState(false);
+  const [tone, setTone] = useState('Friendly');
 
   useEffect(() => {
     if (!id) return;
-    getAgent(Number(id))
-      .then(setAgent)
-      .catch(() => setError(true))
-      .finally(() => setLoading(false));
+    getAgent(Number(id)).then(setAgent).catch(() => setPageError(true)).finally(() => setLoading(false));
   }, [id]);
 
   useEffect(() => {
-    getCalendarStatus()
-      .then(d => setCalendarConnected(d.connected))
-      .catch(() => setCalendarConnected(false));
+    getCalendarStatus().then(d => setCalendarConnected(d.connected)).catch(() => setCalendarConnected(false));
   }, []);
 
   const handleConnectCalendar = async () => {
@@ -275,9 +232,7 @@ const AgentPage: React.FC = () => {
     try {
       const data = await getCalendarAuthUrl(`/agent/${id}`);
       window.location.href = data.url;
-    } catch {
-      setCalendarLoading(false);
-    }
+    } catch { setCalendarLoading(false); }
   };
 
   const handleDelete = async () => {
@@ -287,136 +242,182 @@ const AgentPage: React.FC = () => {
   };
 
   if (loading) return (
-    <div style={{ display: 'flex', height: '100vh', fontFamily: font }}>
+    <div style={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>
       <Sidebar />
-      <main style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', background: T.bg }}>
-        <p style={{ color: T.muted, fontSize: 15, fontFamily: font }}>Loading…</p>
+      <main style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--page-bg)' }}>
+        <p style={{ color: 'var(--text-soft)', fontSize: 14 }}>Loading…</p>
       </main>
     </div>
   );
 
-  if (error || !agent) return (
-    <div style={{ display: 'flex', height: '100vh', fontFamily: font }}>
+  if (pageError || !agent) return (
+    <div style={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>
       <Sidebar />
-      <main style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 16, background: T.bg }}>
-        <p style={{ color: T.secondary, fontSize: 15, fontFamily: font }}>Agent not found.</p>
-        <button onClick={() => navigate('/dashboard')} style={{ fontSize: 14, fontWeight: 700, color: T.forest, background: 'none', border: 'none', cursor: 'pointer', fontFamily: font }}>← Back to Dashboard</button>
+      <main style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 16, background: 'var(--page-bg)' }}>
+        <p style={{ color: 'var(--text-soft)', fontSize: 14 }}>Agent not found.</p>
+        <button onClick={() => navigate('/dashboard')} style={{ fontSize: 13, fontWeight: 600, color: 'var(--plum-mid)', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'var(--font-ui)' }}>← Back to Dashboard</button>
       </main>
     </div>
   );
+
+  const init = agent.name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
+  const createdDate = agent.created_at
+    ? new Date(agent.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+    : null;
+
+  const servicesList = agent.services ? agent.services.split(',').map(s => s.trim()).filter(Boolean) : [];
+
+  const hours = [
+    { d: 'Mon', t: agent.business_hours || '9:00 – 6:00 PM' },
+    { d: 'Tue', t: agent.business_hours || '9:00 – 6:00 PM' },
+    { d: 'Wed', t: agent.business_hours || '9:00 – 6:00 PM' },
+    { d: 'Thu', t: agent.business_hours || '9:00 – 6:00 PM' },
+    { d: 'Fri', t: agent.business_hours || '9:00 – 6:00 PM' },
+    { d: 'Sat', t: null },
+    { d: 'Sun', t: null },
+  ];
 
   return (
-    <>
-      <style>{`@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,200..800&display=swap');`}</style>
-      <div style={{ display: 'flex', height: '100vh', background: T.bg, fontFamily: font }}>
-        <Sidebar />
+    <div style={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>
+      <Sidebar />
 
-        <main style={{ flex: 1, overflowY: 'auto', padding: '40px 48px', display: 'flex', flexDirection: 'column', gap: 32 }}>
-          {/* Top bar */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-            <div style={{ flex: 1 }}>
-              <h1 style={{ fontSize: 24, fontWeight: 800, color: T.ink, letterSpacing: '-0.6px', marginBottom: 6, marginTop: 0, fontFamily: font }}>{agent.name}</h1>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <StatusBadge active={agent.is_active ?? true} />
-                {agent.created_at && (
-                  <span style={{ fontSize: 12, color: T.muted, fontWeight: 500, fontFamily: font }}>
-                    Created {new Date(agent.created_at).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
-                  </span>
-                )}
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
+        {/* Topbar */}
+        <div style={{ background: 'white', borderBottom: '1px solid var(--border)', padding: '0 48px', height: 52, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-dark)', letterSpacing: '-0.02em' }}>{agent.name}</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <StatusPill active={agent.is_active !== false} />
+              {createdDate && <span style={{ fontSize: 11, color: 'var(--text-soft)' }}>Created {createdDate}</span>}
+            </div>
+          </div>
+          <button onClick={() => navigate('/dashboard')} style={{
+            display: 'flex', alignItems: 'center', gap: 6,
+            fontSize: 12, fontWeight: 500, color: 'var(--text-soft)',
+            background: 'none', border: '1px solid var(--border)', borderRadius: 7,
+            padding: '6px 12px', cursor: 'pointer', fontFamily: 'var(--font-ui)',
+            transition: 'background 0.12s, color 0.12s',
+          }}
+            onMouseEnter={e => { const el = e.currentTarget; el.style.background = 'var(--lavender-bg)'; el.style.color = 'var(--text-dark)'; }}
+            onMouseLeave={e => { const el = e.currentTarget; el.style.background = 'none'; el.style.color = 'var(--text-soft)'; }}
+          >
+            <Ic.Back /> Dashboard
+          </button>
+        </div>
+
+        {/* Body */}
+        <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '272px 1fr', overflow: 'hidden' }}>
+
+          {/* LEFT PANEL */}
+          <div style={{ borderRight: '1px solid var(--border)', overflowY: 'auto', overflowX: 'hidden', background: 'white', display: 'flex', flexDirection: 'column' }}>
+
+            {/* Identity */}
+            <div style={panelSection}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4 }}>
+                <div style={{ width: 36, height: 36, background: 'var(--plum)', borderRadius: 9, color: 'white', fontSize: 12, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, letterSpacing: '0.02em' }}>{init}</div>
+                <div>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-dark)', letterSpacing: '-0.01em' }}>{agent.name}</div>
+                  <div style={{ fontSize: 11, color: 'var(--text-soft)', marginTop: 1 }}>Voice Agent · {tone}</div>
+                </div>
               </div>
             </div>
-            <button
-              onClick={() => navigate('/dashboard')}
-              onMouseEnter={e => { e.currentTarget.style.background = T.surfaceAlt; e.currentTarget.style.borderColor = T.borderStrong; }}
-              onMouseLeave={e => { e.currentTarget.style.background = T.surface; e.currentTarget.style.borderColor = T.border; }}
-              style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 18px', background: T.surface, border: `1.5px solid ${T.border}`, borderRadius: 10, fontSize: 13, fontWeight: 700, color: T.body, cursor: 'pointer', fontFamily: font, transition: 'all 0.15s' }}
-            >
-              <ChevLeft /> Dashboard
-            </button>
-          </div>
 
-          {/* Two-column layout */}
-          <div style={{ display: 'grid', gridTemplateColumns: '300px 1fr', gap: 24, flex: 1, minHeight: 0 }}>
-
-            {/* Left: Agent info */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-
-              {/* Profile card */}
-              <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 20, padding: '28px 24px', boxShadow: '0 2px 8px rgba(25,21,16,0.04)' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 28 }}>
-                  <div style={{ width: 52, height: 52, borderRadius: 16, background: T.forest, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                    <MicIcon color="#fff" size={22} />
-                  </div>
-                  <div>
-                    <div style={{ fontSize: 17, fontWeight: 800, color: T.ink, letterSpacing: '-0.3px', fontFamily: font }}>{agent.name}</div>
-                    <div style={{ fontSize: 12, color: T.muted, marginTop: 2, fontFamily: font }}>Voice Agent</div>
-                  </div>
-                </div>
-                <InfoBlock label="Services Offered" value={agent.services} />
-                <InfoBlock label="Business Hours" value={agent.business_hours} />
-                {!agent.services && !agent.business_hours && (
-                  <div style={{ fontSize: 13, color: T.muted, textAlign: 'center', padding: '12px 0', fontFamily: font }}>
-                    No details configured yet.
-                  </div>
-                )}
+            {/* Services */}
+            <div style={panelSection}>
+              <div style={panelSectionTitle}>Services Offered</div>
+              <div style={{ fontSize: 13, color: 'var(--text-dark)', fontWeight: 500, lineHeight: 1.7 }}>
+                {servicesList.length > 0 ? servicesList.join(', ') : <span style={{ color: 'var(--text-soft)', fontStyle: 'italic' }}>No services configured</span>}
               </div>
+            </div>
 
-              {/* Calendar auth card */}
-              <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 20, padding: '20px 24px', boxShadow: '0 2px 8px rgba(25,21,16,0.04)' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-                  <svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke={T.secondary} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-                    <rect x="3" y="4" width="18" height="18" rx="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" />
-                  </svg>
-                  <div style={{ fontSize: 12, fontWeight: 800, color: T.secondary, textTransform: 'uppercase', letterSpacing: '0.08em', fontFamily: font }}>Google Calendar</div>
+            {/* Tone */}
+            <div style={panelSection}>
+              <div style={panelSectionTitle}>Agent Tone</div>
+              <div style={{ display: 'flex', gap: 6 }}>
+                {['Friendly', 'Professional', 'Concise'].map(t => (
+                  <div key={t} onClick={() => setTone(t)} style={{
+                    flex: 1, textAlign: 'center', padding: '6px 8px',
+                    fontSize: 12, fontWeight: t === tone ? 600 : 500, cursor: 'pointer',
+                    border: `1px solid ${t === tone ? 'var(--plum)' : 'var(--border)'}`,
+                    borderRadius: 7, color: t === tone ? 'white' : 'var(--text-soft)',
+                    background: t === tone ? 'var(--plum)' : 'white',
+                    transition: 'all 0.12s',
+                  }}>{t}</div>
+                ))}
+              </div>
+            </div>
+
+            {/* Business Hours */}
+            <div style={panelSection}>
+              <div style={panelSectionTitle}>Business Hours</div>
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <tbody>
+                  {hours.map(h => (
+                    <tr key={h.d}>
+                      <td style={{ padding: '4px 0', fontSize: 12, color: 'var(--text-soft)', fontWeight: 500, width: 36 }}>{h.d}</td>
+                      <td style={{ padding: '4px 0', fontSize: 12, fontWeight: 600, color: h.t ? 'var(--text-dark)' : 'var(--text-soft)', fontStyle: h.t ? 'normal' : 'italic', textAlign: 'right' }}>
+                        {h.t || 'Closed'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Integrations */}
+            <div style={panelSection}>
+              <div style={panelSectionTitle}>Integrations</div>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid #F5F3FF' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, fontWeight: 500, color: 'var(--text-dark)' }}>
+                  <div style={{ width: 22, height: 22, borderRadius: 6, border: '1px solid var(--border)', background: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <LogoGCal />
+                  </div>
+                  Google Calendar
                 </div>
-
                 {calendarConnected ? (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <div style={{ width: 8, height: 8, borderRadius: 99, background: T.green, boxShadow: '0 0 0 2px rgba(42,157,114,0.22)', flexShrink: 0 }} />
-                    <span style={{ fontSize: 13, fontWeight: 600, color: '#1a6647', fontFamily: font }}>Connected</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, fontWeight: 600, color: 'var(--green)' }}>
+                    <div style={{ width: 5, height: 5, background: 'var(--green)', borderRadius: '50%' }} />Connected
                   </div>
                 ) : (
-                  <>
-                    <p style={{ fontSize: 13, color: T.secondary, marginBottom: 14, lineHeight: 1.6, marginTop: 0, fontFamily: font }}>
-                      Connect your Google Calendar so your agent can check availability and book appointments.
-                    </p>
-                    <button
-                      onClick={handleConnectCalendar}
-                      disabled={calendarLoading}
-                      onMouseEnter={e => { if (!calendarLoading) e.currentTarget.style.background = T.forestDeep; }}
-                      onMouseLeave={e => { e.currentTarget.style.background = T.forest; }}
-                      style={{ width: '100%', padding: '9px', background: T.forest, border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 700, color: '#fff', cursor: calendarLoading ? 'not-allowed' : 'pointer', opacity: calendarLoading ? 0.6 : 1, fontFamily: font, transition: 'all 0.12s' }}
-                    >
-                      {calendarLoading ? 'Redirecting…' : 'Connect Google Calendar'}
-                    </button>
-                  </>
+                  <button onClick={handleConnectCalendar} disabled={calendarLoading} style={{ fontSize: 11, fontWeight: 600, color: 'var(--plum-mid)', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'var(--font-ui)' }}>
+                    {calendarLoading ? 'Connecting…' : 'Connect'}
+                  </button>
                 )}
               </div>
-
-              {/* Danger zone */}
-              <div style={{ background: T.surface, border: '1px solid #f5c6c6', borderRadius: 20, padding: '20px 24px' }}>
-                <div style={{ fontSize: 12, fontWeight: 800, color: '#b91c1c', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 12, fontFamily: font }}>Danger Zone</div>
-                <p style={{ fontSize: 13, color: T.secondary, marginBottom: 14, lineHeight: 1.6, marginTop: 0, fontFamily: font }}>Permanently delete this agent and all its data.</p>
-                <button
-                  onClick={handleDelete}
-                  onMouseEnter={e => (e.currentTarget.style.background = '#fef5f5')}
-                  onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
-                  style={{ width: '100%', padding: '9px', background: 'transparent', border: '1.5px solid #f5c6c6', borderRadius: 10, fontSize: 13, fontWeight: 700, color: '#b91c1c', cursor: 'pointer', fontFamily: font, transition: 'all 0.12s' }}
-                >
-                  Delete agent
-                </button>
-              </div>
             </div>
 
-            {/* Right: Conversation Tester */}
-            <div style={{ display: 'flex', flexDirection: 'column', minHeight: 500 }}>
-              <ConvoTester agent={agent} calendarConnected={calendarConnected} />
+            {/* Danger Zone */}
+            <div style={{ ...panelSection, marginTop: 'auto' }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--red)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.07em' }}>Danger Zone</div>
+              <div style={{ fontSize: 11, color: 'var(--text-soft)', lineHeight: 1.5, marginBottom: 12 }}>Permanently delete this agent and all its call history. This cannot be undone.</div>
+              <button onClick={handleDelete} style={{
+                width: '100%', background: 'none', border: '1px solid #FECACA',
+                color: 'var(--red)', fontSize: 12, fontWeight: 600, padding: 8,
+                borderRadius: 7, cursor: 'pointer', fontFamily: 'var(--font-ui)', transition: 'background 0.12s',
+              }}
+                onMouseEnter={e => (e.currentTarget.style.background = 'var(--red-light)')}
+                onMouseLeave={e => (e.currentTarget.style.background = 'none')}
+              >Delete agent</button>
             </div>
           </div>
-        </main>
+
+          {/* RIGHT PANEL */}
+          <RightPanel agent={agent} calendarConnected={calendarConnected} />
+        </div>
       </div>
-    </>
+    </div>
   );
+};
+
+const panelSection: React.CSSProperties = {
+  padding: '16px 20px',
+  borderBottom: '1px solid var(--border)',
+};
+
+const panelSectionTitle: React.CSSProperties = {
+  fontSize: 10, fontWeight: 700, letterSpacing: '0.09em',
+  textTransform: 'uppercase', color: 'var(--text-soft)',
+  marginBottom: 12, opacity: 0.7,
 };
 
 export default AgentPage;

@@ -5,235 +5,122 @@ import type { AgentConfig } from '../services/api';
 import Sidebar from '../components/Sidebar';
 import { persistAppUserFromSession, supabase } from '../lib/supabaseClient';
 
-const T = {
-  forest:       '#1d8c63',
-  forestDeep:   '#177350',
-  forestSoft:   '#ecfdf5',
-  forestMid:    '#a7f3d0',
-  ink:          '#111827',
-  body:         '#374151',
-  secondary:    '#6b7280',
-  muted:        '#9ca3af',
-  border:       '#e5e7eb',
-  borderStrong: '#d1d5db',
-  surfaceAlt:   '#f9fafb',
-  bg:           '#ffffff',
-  surface:      '#ffffff',
-  green:        '#1d8c63',
-};
-
-const font = "'Bricolage Grotesque', sans-serif";
-
 type Metrics = { total_conversations: number; total_appointments_created: number };
 const EMPTY_FORM = { name: '', services: '', business_hours: '', agent_instructions: '' };
 
-/* ── Icons ─────────────────────────────────────── */
-const MicIcon: React.FC<{ size?: number; color?: string }> = ({ size = 17, color = 'currentColor' }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
-    <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z" />
-    <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-    <line x1="12" y1="19" x2="12" y2="22" />
-  </svg>
-);
-
-const PlusIcon: React.FC<{ size?: number; color?: string }> = ({ size = 15, color = 'currentColor' }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round">
-    <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
-  </svg>
-);
-
-const XIcon: React.FC<{ size?: number }> = ({ size = 16 }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round">
-    <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
-  </svg>
-);
-
-/* ── Agent Card ────────────────────────────────── */
-const AgentCard: React.FC<{ agent: AgentConfig; onDelete: (id: number) => void }> = ({ agent, onDelete }) => {
-  const navigate = useNavigate();
-  const [h, setH] = useState(false);
-  const date = agent.created_at
-    ? new Date(agent.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
-    : null;
-  const preview = agent.services
-    ? agent.services.length > 60 ? agent.services.slice(0, 60) + '…' : agent.services
-    : null;
-
-  return (
-    <div
-      onMouseEnter={() => setH(true)}
-      onMouseLeave={() => setH(false)}
-      onClick={() => navigate(`/agent/${agent.id}`)}
-      style={{
-        background: T.surface, borderRadius: 14, padding: '18px 18px 16px',
-        border: `1px solid ${h ? T.forestMid : T.border}`,
-        boxShadow: h ? '0 8px 24px -8px rgba(26,92,58,0.16)' : '0 1px 4px rgba(17,28,23,0.04)',
-        transition: 'all 0.15s cubic-bezier(0.22,1,0.36,1)', cursor: 'pointer',
-        display: 'flex', flexDirection: 'column', gap: 10,
-      }}
-    >
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <div style={{
-            width: 36, height: 36, borderRadius: 10, flexShrink: 0,
-            background: h ? T.forestSoft : T.surfaceAlt,
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            transition: 'background 0.15s',
-          }}>
-            <MicIcon color={h ? T.forest : T.secondary} size={16} />
-          </div>
-          <div>
-            <div style={{ fontSize: 14, fontWeight: 700, color: T.ink, letterSpacing: '-0.2px', fontFamily: font }}>{agent.name}</div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginTop: 2 }}>
-              <div style={{ width: 5, height: 5, borderRadius: 99, background: T.green }} />
-              <span style={{ fontSize: 11, color: T.muted, fontWeight: 600, fontFamily: font }}>Active</span>
-            </div>
-          </div>
-        </div>
-        <button
-          onClick={e => { e.stopPropagation(); onDelete(agent.id); }}
-          onMouseEnter={e => (e.currentTarget.style.color = '#b91c1c')}
-          onMouseLeave={e => (e.currentTarget.style.color = T.muted)}
-          style={{ background: 'none', border: 'none', cursor: 'pointer', color: T.muted, padding: 4, borderRadius: 6, display: 'flex', transition: 'color 0.1s' }}
-        >
-          <XIcon size={14} />
-        </button>
-      </div>
-      {preview && <p style={{ fontSize: 12, color: T.secondary, lineHeight: 1.55, margin: 0, fontFamily: font }}>{preview}</p>}
-      {date && <p style={{ fontSize: 11, color: T.muted, margin: 0, fontFamily: font }}>Created {date}</p>}
-    </div>
-  );
+/* ── ICONS ── */
+const Ic = {
+  Plus: () => <svg width="13" height="13" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4"/></svg>,
+  Trend: () => <svg width="12" height="12" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"/></svg>,
+  Chevron: () => <svg width="11" height="11" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7"/></svg>,
+  X: () => <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>,
 };
 
-/* ── Add Card ──────────────────────────────────── */
-const AddCard: React.FC<{ onClick: () => void }> = ({ onClick }) => {
-  const [h, setH] = useState(false);
-  return (
-    <div
-      onClick={onClick}
-      onMouseEnter={() => setH(true)}
-      onMouseLeave={() => setH(false)}
-      style={{
-        border: `1.5px dashed ${h ? T.forest : T.border}`,
-        borderRadius: 14,
-        display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-        padding: 24, cursor: 'pointer', transition: 'all 0.15s', minHeight: 120, gap: 8,
-        background: h ? T.forestSoft : 'transparent',
-      }}
-    >
-      <div style={{
-        width: 34, height: 34, borderRadius: 9,
-        background: h ? T.forestSoft : T.surfaceAlt,
-        display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.15s',
-      }}>
-        <PlusIcon size={16} color={h ? T.forest : T.muted} />
+/* ── STAT TILE ── */
+const StatTile: React.FC<{ label: string; value: string; delta?: string; up?: boolean; accent?: 'accent' | 'green' }> = ({ label, value, delta, up, accent }) => (
+  <div style={{
+    background: 'white', border: '1px solid var(--border)', borderRadius: 12,
+    padding: '16px 18px', display: 'flex', flexDirection: 'column', gap: 6,
+  }}>
+    <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-soft)', textTransform: 'uppercase', letterSpacing: '0.07em' }}>{label}</div>
+    <div style={{
+      fontSize: 26, fontWeight: 700, letterSpacing: '-0.03em', lineHeight: 1,
+      color: accent === 'accent' ? 'var(--plum-mid)' : accent === 'green' ? 'var(--green)' : 'var(--text-dark)',
+    }}>{value}</div>
+    {delta && (
+      <div style={{ fontSize: 11, fontWeight: 500, color: up ? 'var(--green)' : 'var(--text-soft)', display: 'flex', alignItems: 'center', gap: 4 }}>
+        {up && <Ic.Trend />}{delta}
       </div>
-      <span style={{ fontSize: 13, fontWeight: 700, color: h ? T.forest : T.muted, fontFamily: font, transition: 'color 0.15s' }}>New Agent</span>
-    </div>
-  );
-};
+    )}
+  </div>
+);
 
-/* ── Create Modal ──────────────────────────────── */
-type Field = { key: keyof typeof EMPTY_FORM; label: string; placeholder: string; required?: boolean; textarea?: boolean; rows?: number };
-const FIELDS: Field[] = [
-  { key: 'name', label: 'Agent name', placeholder: 'e.g. Booking Assistant', required: true },
-  { key: 'services', label: 'Services offered', placeholder: 'e.g. Haircut (30 min), Color (90 min)', textarea: true, rows: 2 },
-  { key: 'business_hours', label: 'Business hours', placeholder: 'e.g. Mon–Fri 9am–6pm, Sat 10am–4pm' },
-  { key: 'agent_instructions', label: 'Agent instructions', placeholder: 'Tone, FAQs, cancellation policy…', textarea: true, rows: 3 },
+/* ── STATUS PILL ── */
+const StatusPill: React.FC<{ active: boolean }> = ({ active }) => (
+  <div style={{
+    display: 'inline-flex', alignItems: 'center', gap: 5,
+    fontSize: 11, fontWeight: 600, padding: '3px 9px', borderRadius: 100,
+    background: active ? 'var(--green-light)' : '#F3F4F6',
+    color: active ? 'var(--green)' : '#6B7280',
+  }}>
+    <div style={{
+      width: 5, height: 5, borderRadius: '50%',
+      background: active ? 'var(--green)' : '#9CA3AF',
+      animation: active ? 'pip-pulse 2s ease-in-out infinite' : 'none',
+    }} />
+    {active ? 'Active' : 'Inactive'}
+  </div>
+);
+
+/* ── CREATE MODAL ── */
+const FIELDS = [
+  { key: 'name' as const,                label: 'Agent name',         placeholder: 'e.g. Booking Assistant', required: true },
+  { key: 'services' as const,            label: 'Services offered',   placeholder: 'e.g. Haircut (30 min), Color (90 min)', textarea: true, rows: 2 },
+  { key: 'business_hours' as const,      label: 'Business hours',     placeholder: 'e.g. Mon–Fri 9am–6pm, Sat 10am–4pm' },
+  { key: 'agent_instructions' as const,  label: 'Agent instructions', placeholder: 'Tone, FAQs, cancellation policy…', textarea: true, rows: 3 },
 ];
-
-const inputBase: React.CSSProperties = {
-  width: '100%', padding: '10px 14px',
-  border: `1.5px solid ${T.border}`, borderRadius: 10,
-  fontSize: 14, outline: 'none', color: T.ink,
-  boxSizing: 'border-box', transition: 'border-color 0.15s',
-  fontFamily: font, background: T.bg,
-};
 
 const CreateModal: React.FC<{
   onClose: () => void;
-  onCreate: (agent: AgentConfig) => void;
   error: string | null;
   saving: boolean;
   form: typeof EMPTY_FORM;
   setForm: React.Dispatch<React.SetStateAction<typeof EMPTY_FORM>>;
   onSubmit: () => void;
 }> = ({ onClose, error, saving, form, setForm, onSubmit }) => (
-  <div
-    onClick={onClose}
-    style={{
-      position: 'fixed', inset: 0, background: 'rgba(17,28,23,0.28)',
-      display: 'flex', alignItems: 'center', justifyContent: 'center',
-      zIndex: 200, padding: 24, backdropFilter: 'blur(4px)',
-    }}
-  >
-    <div
-      onClick={e => e.stopPropagation()}
-      style={{
-        background: T.surface, borderRadius: 20, padding: '36px 36px 32px',
-        width: '100%', maxWidth: 500,
-        boxShadow: '0 24px 80px rgba(17,28,23,0.14)',
-        fontFamily: font,
-      }}
-    >
+  <div onClick={onClose} style={{
+    position: 'fixed', inset: 0, background: 'rgba(28,10,48,0.4)',
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    zIndex: 200, padding: 24, backdropFilter: 'blur(6px)',
+  }}>
+    <div onClick={e => e.stopPropagation()} style={{
+      background: 'white', borderRadius: 20, padding: '36px 36px 32px',
+      width: '100%', maxWidth: 480,
+      boxShadow: '0 24px 80px rgba(59,7,100,0.18)',
+      fontFamily: 'var(--font-ui)',
+    }}>
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 28 }}>
         <div>
-          <h3 style={{ fontSize: 20, fontWeight: 800, color: T.ink, letterSpacing: '-0.4px', margin: 0, fontFamily: font }}>New agent</h3>
-          <p style={{ fontSize: 13, color: T.secondary, marginTop: 4, marginBottom: 0, fontFamily: font }}>Live in minutes.</p>
+          <h3 style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-dark)', letterSpacing: '-0.02em', margin: 0 }}>New agent</h3>
+          <p style={{ fontSize: 13, color: 'var(--text-soft)', marginTop: 4, marginBottom: 0 }}>Live in minutes.</p>
         </div>
-        <button onClick={onClose}
-          onMouseEnter={e => (e.currentTarget.style.color = T.body)}
-          onMouseLeave={e => (e.currentTarget.style.color = T.muted)}
-          style={{ color: T.muted, background: 'none', border: 'none', cursor: 'pointer', padding: 4, display: 'flex', transition: 'color 0.1s' }}>
-          <XIcon size={20} />
+        <button onClick={onClose} style={{ color: 'var(--text-soft)', background: 'none', border: 'none', cursor: 'pointer', padding: 4, display: 'flex' }}>
+          <Ic.X />
         </button>
       </div>
 
       {error && (
-        <div style={{ background: '#fef5f5', border: '1px solid #f5c6c6', color: '#8b2020', borderRadius: 10, padding: '10px 14px', fontSize: 13, marginBottom: 16, fontFamily: font }}>
+        <div style={{ background: 'var(--red-light)', border: '1px solid #FECACA', color: 'var(--red)', borderRadius: 8, padding: '10px 14px', fontSize: 13, marginBottom: 16 }}>
           {error}
         </div>
       )}
 
       {FIELDS.map(({ key, label, placeholder, required, textarea, rows }) => (
         <div key={key} style={{ marginBottom: 16 }}>
-          <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: T.secondary, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6, fontFamily: font }}>
-            {label}{required && <span style={{ color: T.forest }}> *</span>}
+          <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: 'var(--text-soft)', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 5 }}>
+            {label}{required && <span style={{ color: 'var(--plum-mid)' }}> *</span>}
           </label>
           {textarea ? (
-            <textarea
-              rows={rows}
-              value={form[key as keyof typeof form]}
-              onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))}
-              placeholder={placeholder}
-              style={{ ...inputBase, resize: 'vertical' }}
-              onFocus={e => (e.target.style.borderColor = T.forest)}
-              onBlur={e => (e.target.style.borderColor = T.border)}
+            <textarea rows={rows} value={form[key]} onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))} placeholder={placeholder}
+              style={{ width: '100%', padding: '9px 12px', background: 'var(--lavender-bg)', border: '1px solid var(--lavender-dark)', borderRadius: 8, fontSize: 13, outline: 'none', fontFamily: 'var(--font-ui)', color: 'var(--text-dark)', resize: 'vertical' }}
+              onFocus={e => (e.target.style.borderColor = 'var(--plum-xlight)')}
+              onBlur={e => (e.target.style.borderColor = 'var(--lavender-dark)')}
             />
           ) : (
-            <input
-              value={form[key as keyof typeof form]}
-              onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))}
-              placeholder={placeholder}
-              style={inputBase}
-              onFocus={e => (e.target.style.borderColor = T.forest)}
-              onBlur={e => (e.target.style.borderColor = T.border)}
+            <input value={form[key]} onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))} placeholder={placeholder}
+              style={{ width: '100%', padding: '9px 12px', background: 'var(--lavender-bg)', border: '1px solid var(--lavender-dark)', borderRadius: 8, fontSize: 13, outline: 'none', fontFamily: 'var(--font-ui)', color: 'var(--text-dark)' }}
+              onFocus={e => (e.target.style.borderColor = 'var(--plum-xlight)')}
+              onBlur={e => (e.target.style.borderColor = 'var(--lavender-dark)')}
             />
           )}
         </div>
       ))}
 
       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 20 }}>
-        <button onClick={onClose}
-          onMouseEnter={e => { e.currentTarget.style.background = T.surfaceAlt; e.currentTarget.style.borderColor = T.borderStrong; }}
-          onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.borderColor = T.border; }}
-          style={{ padding: '10px 18px', borderRadius: 10, fontWeight: 700, fontSize: 14, background: 'transparent', color: T.body, border: `1.5px solid ${T.border}`, cursor: 'pointer', fontFamily: font, transition: 'all 0.15s' }}>
+        <button onClick={onClose} style={{ padding: '9px 18px', borderRadius: 8, fontWeight: 600, fontSize: 13, background: 'transparent', color: 'var(--text-mid)', border: '1px solid var(--border)', cursor: 'pointer', fontFamily: 'var(--font-ui)' }}>
           Cancel
         </button>
-        <button onClick={onSubmit} disabled={saving}
-          onMouseEnter={e => { if (!saving) e.currentTarget.style.background = T.forestDeep; }}
-          onMouseLeave={e => { e.currentTarget.style.background = T.forest; }}
-          style={{ padding: '10px 20px', borderRadius: 10, fontWeight: 700, fontSize: 14, background: T.forest, color: '#fff', border: 'none', cursor: saving ? 'not-allowed' : 'pointer', opacity: saving ? 0.65 : 1, fontFamily: font, transition: 'all 0.15s' }}>
+        <button onClick={onSubmit} disabled={saving} style={{ padding: '9px 20px', borderRadius: 8, fontWeight: 600, fontSize: 13, background: 'var(--plum)', color: 'white', border: 'none', cursor: saving ? 'not-allowed' : 'pointer', opacity: saving ? 0.65 : 1, fontFamily: 'var(--font-ui)' }}>
           {saving ? 'Creating…' : 'Create agent'}
         </button>
       </div>
@@ -241,20 +128,24 @@ const CreateModal: React.FC<{
   </div>
 );
 
-/* ── Dashboard ─────────────────────────────────── */
+/* ── DASHBOARD ── */
 const Dashboard: React.FC = () => {
+  const navigate = useNavigate();
   const [metrics, setMetrics] = useState<Metrics>({ total_conversations: 0, total_appointments_created: 0 });
   const [agents, setAgents] = useState<AgentConfig[]>([]);
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [userName, setUserName] = useState('');
 
   useEffect(() => {
     const init = async () => {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) { window.location.href = '/auth'; return; }
       persistAppUserFromSession(session);
+      const fullName = session.user.user_metadata?.full_name || session.user.email || '';
+      setUserName(fullName.split(' ')[0]);
       const [metricsResult, agentsResult] = await Promise.allSettled([getMetrics(), getAgents()]);
       if (metricsResult.status === 'fulfilled') setMetrics(metricsResult.value.metrics);
       if (agentsResult.status === 'fulfilled') setAgents(agentsResult.value);
@@ -266,12 +157,7 @@ const Dashboard: React.FC = () => {
     if (!form.name.trim()) { setError('Agent name is required.'); return; }
     setSaving(true); setError(null);
     try {
-      const newAgent = await createAgent({
-        name: form.name.trim(),
-        services: form.services || undefined,
-        business_hours: form.business_hours || undefined,
-        agent_instructions: form.agent_instructions || undefined,
-      });
+      const newAgent = await createAgent({ name: form.name.trim(), services: form.services || undefined, business_hours: form.business_hours || undefined, agent_instructions: form.agent_instructions || undefined });
       setAgents(prev => [newAgent, ...prev]);
       setShowModal(false);
       setForm(EMPTY_FORM);
@@ -287,104 +173,226 @@ const Dashboard: React.FC = () => {
     setAgents(prev => prev.filter(a => a.id !== id));
   };
 
-  const handleSignOut = async () => {
-    await supabase.auth.signOut();
-    window.location.href = '/auth';
-  };
+  const today = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
 
-  const hour = new Date().getHours();
-  const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
+  const rate = metrics.total_conversations > 0
+    ? Math.round((metrics.total_appointments_created / metrics.total_conversations) * 100) + '%'
+    : '—';
+
+  const activeCount = agents.filter(a => a.is_active !== false).length;
+
+  const agentColors = ['var(--plum)', 'var(--plum-mid)', 'var(--plum-light)'];
 
   return (
-    <>
-      <style>{`@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,200..800&display=swap');`}</style>
-      <div style={{ display: 'flex', height: '100vh', background: T.bg, fontFamily: font }}>
-        <Sidebar />
+    <div style={{ display: 'flex', height: '100vh', overflow: 'hidden', background: 'var(--page-bg)' }}>
+      <Sidebar />
 
-        <main style={{ flex: 1, overflowY: 'auto', padding: '48px 56px' }}>
-
-          {/* Header */}
-          <div style={{ marginBottom: 36, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
-            <h1 style={{ fontSize: 26, fontWeight: 800, color: T.ink, letterSpacing: '-0.6px', margin: 0, fontFamily: font }}>
-              {greeting}
-            </h1>
-            <button
-              onClick={handleSignOut}
-              onMouseEnter={e => { e.currentTarget.style.background = T.surfaceAlt; e.currentTarget.style.borderColor = T.borderStrong; }}
-              onMouseLeave={e => { e.currentTarget.style.background = T.surface; e.currentTarget.style.borderColor = T.border; }}
-              style={{ padding: '9px 18px', background: T.surface, border: `1.5px solid ${T.border}`, borderRadius: 10, fontSize: 13, fontWeight: 700, color: T.body, cursor: 'pointer', fontFamily: font, transition: 'all 0.15s', flexShrink: 0 }}
-            >
-              Sign out
-            </button>
-          </div>
-
-          {/* Metric cards */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 14, maxWidth: 520, marginBottom: 48 }}>
-            <div style={{
-              background: T.surface, border: `1px solid ${T.border}`, borderRadius: 14,
-              padding: '20px 24px', boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
-            }}>
-              <div style={{ fontSize: 11, fontWeight: 700, color: T.muted, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 10, fontFamily: font }}>
-                Conversations
-              </div>
-              <div style={{ fontSize: 38, fontWeight: 800, color: T.ink, letterSpacing: '-2px', lineHeight: 1, fontFamily: font }}>
-                {metrics.total_conversations}
-              </div>
-            </div>
-            <div style={{
-              background: T.surface, border: `1px solid ${T.border}`, borderRadius: 14,
-              padding: '20px 24px', boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
-            }}>
-              <div style={{ fontSize: 11, fontWeight: 700, color: T.muted, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 10, fontFamily: font }}>
-                Appointments booked
-              </div>
-              <div style={{ fontSize: 38, fontWeight: 800, color: T.forest, letterSpacing: '-2px', lineHeight: 1, fontFamily: font }}>
-                {metrics.total_appointments_created}
-              </div>
-            </div>
-          </div>
-
-          {/* Agents section */}
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
+        {/* Page header */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '20px 48px 0 28px', flexShrink: 0 }}>
           <div>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20, maxWidth: 900 }}>
+            <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-dark)', letterSpacing: '-0.02em' }}>
+              Welcome back,{' '}
+              <em style={{ fontFamily: 'var(--font-brand)', fontStyle: 'italic', fontWeight: 600, color: 'var(--plum-mid)' }}>{userName || 'there'}</em>
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--text-soft)', marginTop: 2 }}>{today}</div>
+          </div>
+          <button onClick={() => setShowModal(true)} style={{
+            display: 'flex', alignItems: 'center', gap: 6,
+            background: 'var(--plum)', color: 'white', border: 'none', borderRadius: 8,
+            padding: '8px 16px', fontSize: 13, fontWeight: 600, cursor: 'pointer',
+            fontFamily: 'var(--font-ui)', transition: 'background 0.15s',
+          }}
+            onMouseEnter={e => (e.currentTarget.style.background = 'var(--plum-mid)')}
+            onMouseLeave={e => (e.currentTarget.style.background = 'var(--plum)')}
+          >
+            <Ic.Plus /> New Agent
+          </button>
+        </div>
+
+        {/* Scrollable body */}
+        <div style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', padding: '20px 48px 32px 28px', display: 'flex', flexDirection: 'column', gap: 24 }}>
+
+          {/* Stat strip */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 12 }}>
+            <StatTile label="Conversations" value={String(metrics.total_conversations)} delta="+0 today" up={false} />
+            <StatTile label="Appointments Booked" value={String(metrics.total_appointments_created)} delta="+0 today" up={false} accent="accent" />
+            <StatTile label="Booking Rate" value={rate} accent="green" />
+            <StatTile label="Active Agents" value={`${activeCount} / ${agents.length}`} delta={agents.length - activeCount > 0 ? `${agents.length - activeCount} inactive` : undefined} />
+          </div>
+
+          {/* Agents table */}
+          <div style={{ background: 'white', border: '1px solid var(--border)', borderRadius: 12, overflow: 'hidden' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 20px', borderBottom: '1px solid var(--border)' }}>
               <div>
-                <h2 style={{ fontSize: 17, fontWeight: 800, color: T.ink, letterSpacing: '-0.3px', margin: 0, fontFamily: font }}>Your Agents</h2>
-                <p style={{ fontSize: 12, color: T.muted, marginTop: 3, marginBottom: 0, fontFamily: font }}>
-                  {agents.length} agent{agents.length !== 1 ? 's' : ''} configured
-                </p>
+                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-dark)' }}>Agents</div>
+                <div style={{ fontSize: 11, color: 'var(--text-soft)', marginTop: 1 }}>{agents.length} configured</div>
               </div>
-              <button
-                onClick={() => setShowModal(true)}
-                onMouseEnter={e => { e.currentTarget.style.background = T.forestDeep; }}
-                onMouseLeave={e => { e.currentTarget.style.background = T.forest; }}
-                style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 16px', background: T.forest, border: 'none', borderRadius: 9, fontSize: 13, fontWeight: 700, color: '#fff', cursor: 'pointer', fontFamily: font, transition: 'background 0.15s' }}
+              <button onClick={() => setShowModal(true)} style={{
+                display: 'flex', alignItems: 'center', gap: 6,
+                background: 'white', color: 'var(--text-mid)', border: '1px solid var(--border)',
+                borderRadius: 8, padding: '7px 14px', fontSize: 13, fontWeight: 500,
+                cursor: 'pointer', fontFamily: 'var(--font-ui)', transition: 'background 0.15s',
+              }}
+                onMouseEnter={e => (e.currentTarget.style.background = 'var(--lavender-bg)')}
+                onMouseLeave={e => (e.currentTarget.style.background = 'white')}
               >
-                <PlusIcon size={13} color="#fff" /> New agent
+                <Ic.Plus /> New Agent
               </button>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(224px, 1fr))', gap: 14, maxWidth: 900 }}>
-              {agents.map(agent => (
-                <AgentCard key={agent.id} agent={agent} onDelete={handleDelete} />
-              ))}
-              <AddCard onClick={() => setShowModal(true)} />
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr>
+                  {['Agent', 'Status', 'Created', '', ''].map((h, i) => (
+                    <th key={i} style={{
+                      fontSize: 11, fontWeight: 600, color: 'var(--text-soft)',
+                      textTransform: 'uppercase', letterSpacing: '0.07em',
+                      padding: '10px 20px', textAlign: 'left',
+                      background: '#FAFAFE', borderBottom: '1px solid var(--border)',
+                    }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {agents.map((agent, i) => {
+                  const init = agent.name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
+                  const createdDate = agent.created_at
+                    ? new Date(agent.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+                    : '—';
+                  return (
+                    <AgentRow
+                      key={agent.id}
+                      init={init}
+                      color={agentColors[i % agentColors.length]}
+                      name={agent.name}
+                      type="Voice Agent"
+                      active={agent.is_active !== false}
+                      created={createdDate}
+                      onConfigure={() => navigate(`/agent/${agent.id}`)}
+                      onDelete={() => handleDelete(agent.id)}
+                    />
+                  );
+                })}
+                <tr>
+                  <td colSpan={5} style={{ padding: '10px 20px' }}>
+                    <button onClick={() => setShowModal(true)} style={{
+                      display: 'inline-flex', alignItems: 'center', gap: 6,
+                      background: 'none', border: '1px dashed var(--lavender-dark)',
+                      borderRadius: 8, padding: '7px 14px', fontSize: 12, fontWeight: 600,
+                      color: 'var(--text-soft)', cursor: 'pointer', fontFamily: 'var(--font-ui)',
+                      transition: 'background 0.12s, color 0.12s, border-color 0.12s',
+                    }}
+                      onMouseEnter={e => { const el = e.currentTarget; el.style.background = 'var(--lavender-bg)'; el.style.color = 'var(--plum-mid)'; el.style.borderColor = 'var(--plum-xlight)'; }}
+                      onMouseLeave={e => { const el = e.currentTarget; el.style.background = 'none'; el.style.color = 'var(--text-soft)'; el.style.borderColor = 'var(--lavender-dark)'; }}
+                    >
+                      <Ic.Plus /> Add agent
+                    </button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          {/* Bottom row */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 320px', gap: 16 }}>
+            {/* Recent Activity */}
+            <div style={{ background: 'white', border: '1px solid var(--border)', borderRadius: 12, overflow: 'hidden' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 20px', borderBottom: '1px solid var(--border)' }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-dark)' }}>Recent Activity</div>
+                <button style={{ fontSize: 11, fontWeight: 600, color: 'var(--plum-mid)', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'var(--font-ui)', display: 'flex', alignItems: 'center', gap: 4 }}>
+                  View all <Ic.Chevron />
+                </button>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '40px 20px', gap: 8 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-dark)', opacity: 0.35 }}>No activity yet</div>
+                <div style={{ fontSize: 12, color: 'var(--text-soft)' }}>Call logs will appear here once your agent handles calls</div>
+              </div>
+            </div>
+
+            {/* Today's Schedule */}
+            <div style={{ background: 'white', border: '1px solid var(--border)', borderRadius: 12, overflow: 'hidden' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 20px', borderBottom: '1px solid var(--border)' }}>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-dark)' }}>Today's Schedule</div>
+                  <div style={{ fontSize: 11, color: 'var(--text-soft)', marginTop: 1 }}>{today.split(',').slice(1).join(',').trim()}</div>
+                </div>
+                <button style={{ fontSize: 11, fontWeight: 600, color: 'var(--plum-mid)', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'var(--font-ui)', display: 'flex', alignItems: 'center', gap: 4 }}>
+                  Calendar <Ic.Chevron />
+                </button>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '40px 20px', gap: 8 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-dark)', opacity: 0.35 }}>No appointments today</div>
+                <div style={{ fontSize: 12, color: 'var(--text-soft)' }}>Connect Google Calendar to see your schedule</div>
+              </div>
             </div>
           </div>
-        </main>
-
-        {showModal && (
-          <CreateModal
-            onClose={() => { setShowModal(false); setForm(EMPTY_FORM); setError(null); }}
-            onCreate={a => setAgents(prev => [a, ...prev])}
-            error={error}
-            saving={saving}
-            form={form}
-            setForm={setForm}
-            onSubmit={handleCreate}
-          />
-        )}
+        </div>
       </div>
-    </>
+
+      {showModal && (
+        <CreateModal
+          onClose={() => { setShowModal(false); setForm(EMPTY_FORM); setError(null); }}
+          error={error}
+          saving={saving}
+          form={form}
+          setForm={setForm}
+          onSubmit={handleCreate}
+        />
+      )}
+    </div>
+  );
+};
+
+/* ── AGENT TABLE ROW ── */
+const AgentRow: React.FC<{
+  init: string; color: string; name: string; type: string;
+  active: boolean; created: string;
+  onConfigure: () => void; onDelete: () => void;
+}> = ({ init, color, name, type, active, created, onConfigure, onDelete }) => {
+  const [hover, setHover] = useState(false);
+  return (
+    <tr
+      onClick={onConfigure}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      style={{ background: hover ? '#FAFAFE' : 'white', cursor: 'pointer', transition: 'background 0.12s' }}
+    >
+      <td style={{ padding: '12px 20px', borderBottom: '1px solid var(--lavender-bg)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div style={{ width: 30, height: 30, borderRadius: 8, background: color, color: 'white', fontSize: 11, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, letterSpacing: '0.02em' }}>{init}</div>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-dark)' }}>{name}</div>
+            <div style={{ fontSize: 11, color: 'var(--text-soft)', marginTop: 1 }}>{type}</div>
+          </div>
+        </div>
+      </td>
+      <td style={{ padding: '12px 20px', borderBottom: '1px solid var(--lavender-bg)' }}>
+        <StatusPill active={active} />
+      </td>
+      <td style={{ padding: '12px 20px', borderBottom: '1px solid var(--lavender-bg)', fontSize: 13, color: 'var(--text-soft)', fontWeight: 400 }}>{created}</td>
+      <td style={{ padding: '12px 20px', borderBottom: '1px solid var(--lavender-bg)' }}>
+        <button onClick={e => { e.stopPropagation(); onConfigure(); }} style={{
+          background: 'none', border: '1px solid var(--border)', borderRadius: 6,
+          padding: '5px 10px', fontSize: 11, fontWeight: 600, color: 'var(--text-mid)',
+          cursor: 'pointer', fontFamily: 'var(--font-ui)', transition: 'background 0.12s, border-color 0.12s, color 0.12s',
+        }}
+          onMouseEnter={e => { const el = e.currentTarget; el.style.background = 'var(--lavender-bg)'; el.style.borderColor = 'var(--lavender-dark)'; el.style.color = 'var(--plum)'; }}
+          onMouseLeave={e => { const el = e.currentTarget; el.style.background = 'none'; el.style.borderColor = 'var(--border)'; el.style.color = 'var(--text-mid)'; }}
+        >Configure</button>
+      </td>
+      <td style={{ padding: '12px 20px', borderBottom: '1px solid var(--lavender-bg)' }}>
+        <button onClick={e => { e.stopPropagation(); onDelete(); }} style={{
+          background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-soft)',
+          padding: 4, borderRadius: 6, display: 'flex', transition: 'color 0.1s',
+        }}
+          onMouseEnter={e => (e.currentTarget.style.color = 'var(--red)')}
+          onMouseLeave={e => (e.currentTarget.style.color = 'var(--text-soft)')}
+        >
+          <Ic.X />
+        </button>
+      </td>
+    </tr>
   );
 };
 
