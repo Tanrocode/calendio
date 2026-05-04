@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { getAgent, deleteAgent, chatWithAgent, getCalendarStatus, getCalendarAuthUrl } from '../services/api';
 import type { AgentConfig } from '../services/api';
 import Sidebar from '../components/Sidebar';
+import { parseWeekHours, fmtTime } from '../components/BusinessHoursEditor';
 
 /* ── ICONS ── */
 const Ic = {
@@ -96,7 +97,7 @@ const RightPanel: React.FC<{ agent: AgentConfig; calendarConnected: boolean | nu
   return (
     <div style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', background: 'var(--page-bg)' }}>
       {/* Chat topbar */}
-      <div style={{ background: 'white', borderBottom: '1px solid var(--border)', padding: '12px 48px', display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0 }}>
+      <div style={{ background: 'white', borderBottom: '1px solid var(--border)', padding: '12px 24px', display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0 }}>
         <div style={{ width: 32, height: 32, background: 'var(--plum)', borderRadius: 8, color: 'white', fontSize: 11, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{init}</div>
         <div>
           <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-dark)' }}>{agent.name}</div>
@@ -108,7 +109,7 @@ const RightPanel: React.FC<{ agent: AgentConfig; calendarConnected: boolean | nu
       </div>
 
       {/* Chat body */}
-      <div style={{ flex: 1, overflowY: 'auto', padding: '24px 48px', display: 'flex', flexDirection: 'column' }}>
+      <div style={{ flex: 1, overflowY: 'auto', padding: '24px 32px', display: 'flex', flexDirection: 'column' }}>
         {!calendarConnected ? (
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 16, paddingBottom: 32 }}>
             <div style={{ width: 52, height: 52, background: 'white', border: '1px solid var(--border)', borderRadius: 14, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 2px 8px rgba(59,7,100,0.06)' }}>
@@ -176,7 +177,7 @@ const RightPanel: React.FC<{ agent: AgentConfig; calendarConnected: boolean | nu
       </div>
 
       {/* Input bar */}
-      <div style={{ background: 'white', borderTop: '1px solid var(--border)', padding: '12px 48px', display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, opacity: calendarConnected ? 1 : 0.4, pointerEvents: calendarConnected ? 'auto' : 'none' }}>
+      <div style={{ background: 'white', borderTop: '1px solid var(--border)', padding: '12px 24px', display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, opacity: calendarConnected ? 1 : 0.4, pointerEvents: calendarConnected ? 'auto' : 'none' }}>
         <div style={{ flex: 1, background: 'var(--lavender-bg)', border: '1px solid var(--lavender-dark)', borderRadius: 8, display: 'flex', alignItems: 'center', padding: '0 12px', transition: 'border-color 0.15s' }}
           onFocus={e => (e.currentTarget.style.borderColor = 'var(--plum-xlight)')}
           onBlur={e => (e.currentTarget.style.borderColor = 'var(--lavender-dark)')}
@@ -267,15 +268,11 @@ const AgentPage: React.FC = () => {
 
   const servicesList = agent.services ? agent.services.split(',').map(s => s.trim()).filter(Boolean) : [];
 
-  const hours = [
-    { d: 'Mon', t: agent.business_hours || '9:00 – 6:00 PM' },
-    { d: 'Tue', t: agent.business_hours || '9:00 – 6:00 PM' },
-    { d: 'Wed', t: agent.business_hours || '9:00 – 6:00 PM' },
-    { d: 'Thu', t: agent.business_hours || '9:00 – 6:00 PM' },
-    { d: 'Fri', t: agent.business_hours || '9:00 – 6:00 PM' },
-    { d: 'Sat', t: null },
-    { d: 'Sun', t: null },
-  ];
+  const weekHours = parseWeekHours(agent.business_hours ?? undefined);
+  const hours = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map(d => {
+    const h = weekHours[d];
+    return { d, t: h ? `${fmtTime(h.open)} – ${fmtTime(h.close)}` : null };
+  });
 
   return (
     <div style={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>
@@ -283,7 +280,7 @@ const AgentPage: React.FC = () => {
 
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
         {/* Topbar */}
-        <div style={{ background: 'white', borderBottom: '1px solid var(--border)', padding: '0 48px', height: 52, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
+        <div style={{ background: 'white', borderBottom: '1px solid var(--border)', padding: '0 24px', height: 52, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
             <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-dark)', letterSpacing: '-0.02em' }}>{agent.name}</div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>

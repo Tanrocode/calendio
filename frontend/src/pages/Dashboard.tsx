@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { getMetrics, getAgents, createAgent, deleteAgent } from '../services/api';
 import type { AgentConfig } from '../services/api';
 import Sidebar from '../components/Sidebar';
+import BusinessHoursEditor from '../components/BusinessHoursEditor';
 import { persistAppUserFromSession, supabase } from '../lib/supabaseClient';
 
 type Metrics = { total_conversations: number; total_appointments_created: number };
@@ -52,12 +53,15 @@ const StatusPill: React.FC<{ active: boolean }> = ({ active }) => (
   </div>
 );
 
+type FieldDef = { key: keyof typeof EMPTY_FORM; label: string; placeholder: string; required?: boolean; textarea?: boolean; rows?: number };
+
 /* ── CREATE MODAL ── */
-const FIELDS = [
-  { key: 'name' as const,                label: 'Agent name',         placeholder: 'e.g. Booking Assistant', required: true },
-  { key: 'services' as const,            label: 'Services offered',   placeholder: 'e.g. Haircut (30 min), Color (90 min)', textarea: true, rows: 2 },
-  { key: 'business_hours' as const,      label: 'Business hours',     placeholder: 'e.g. Mon–Fri 9am–6pm, Sat 10am–4pm' },
-  { key: 'agent_instructions' as const,  label: 'Agent instructions', placeholder: 'Tone, FAQs, cancellation policy…', textarea: true, rows: 3 },
+const FIELDS_BEFORE: FieldDef[] = [
+  { key: 'name',     label: 'Agent name',       placeholder: 'e.g. Booking Assistant', required: true },
+  { key: 'services', label: 'Services offered', placeholder: 'e.g. Haircut (30 min), Color (90 min)', textarea: true, rows: 2 },
+];
+const FIELDS_AFTER: FieldDef[] = [
+  { key: 'agent_instructions', label: 'Agent instructions', placeholder: 'Tone, FAQs, cancellation policy…', textarea: true, rows: 3 },
 ];
 
 const CreateModal: React.FC<{
@@ -95,26 +99,42 @@ const CreateModal: React.FC<{
         </div>
       )}
 
-      {FIELDS.map(({ key, label, placeholder, required, textarea, rows }) => (
-        <div key={key} style={{ marginBottom: 16 }}>
-          <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: 'var(--text-soft)', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 5 }}>
-            {label}{required && <span style={{ color: 'var(--plum-mid)' }}> *</span>}
-          </label>
-          {textarea ? (
-            <textarea rows={rows} value={form[key]} onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))} placeholder={placeholder}
-              style={{ width: '100%', padding: '9px 12px', background: 'var(--lavender-bg)', border: '1px solid var(--lavender-dark)', borderRadius: 8, fontSize: 13, outline: 'none', fontFamily: 'var(--font-ui)', color: 'var(--text-dark)', resize: 'vertical' }}
-              onFocus={e => (e.target.style.borderColor = 'var(--plum-xlight)')}
-              onBlur={e => (e.target.style.borderColor = 'var(--lavender-dark)')}
-            />
-          ) : (
-            <input value={form[key]} onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))} placeholder={placeholder}
-              style={{ width: '100%', padding: '9px 12px', background: 'var(--lavender-bg)', border: '1px solid var(--lavender-dark)', borderRadius: 8, fontSize: 13, outline: 'none', fontFamily: 'var(--font-ui)', color: 'var(--text-dark)' }}
-              onFocus={e => (e.target.style.borderColor = 'var(--plum-xlight)')}
-              onBlur={e => (e.target.style.borderColor = 'var(--lavender-dark)')}
-            />
-          )}
-        </div>
-      ))}
+      {[...FIELDS_BEFORE, ...FIELDS_AFTER].map(({ key, label, placeholder, required, textarea, rows }) => {
+        const isBusiness = key === 'agent_instructions';
+        return (
+          <React.Fragment key={key}>
+            {isBusiness && (
+              <div style={{ marginBottom: 16 }}>
+                <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: 'var(--text-soft)', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 8 }}>
+                  Business hours
+                </label>
+                <BusinessHoursEditor
+                  value={form.business_hours}
+                  onChange={v => setForm(f => ({ ...f, business_hours: v }))}
+                />
+              </div>
+            )}
+            <div style={{ marginBottom: 16 }}>
+              <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: 'var(--text-soft)', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 5 }}>
+                {label}{required ? <span style={{ color: 'var(--plum-mid)' }}> *</span> : null}
+              </label>
+              {textarea ? (
+                <textarea rows={rows} value={form[key]} onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))} placeholder={placeholder}
+                  style={{ width: '100%', padding: '9px 12px', background: 'var(--lavender-bg)', border: '1px solid var(--lavender-dark)', borderRadius: 8, fontSize: 13, outline: 'none', fontFamily: 'var(--font-ui)', color: 'var(--text-dark)', resize: 'vertical' }}
+                  onFocus={e => (e.target.style.borderColor = 'var(--plum-xlight)')}
+                  onBlur={e => (e.target.style.borderColor = 'var(--lavender-dark)')}
+                />
+              ) : (
+                <input value={form[key]} onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))} placeholder={placeholder}
+                  style={{ width: '100%', padding: '9px 12px', background: 'var(--lavender-bg)', border: '1px solid var(--lavender-dark)', borderRadius: 8, fontSize: 13, outline: 'none', fontFamily: 'var(--font-ui)', color: 'var(--text-dark)' }}
+                  onFocus={e => (e.target.style.borderColor = 'var(--plum-xlight)')}
+                  onBlur={e => (e.target.style.borderColor = 'var(--lavender-dark)')}
+                />
+              )}
+            </div>
+          </React.Fragment>
+        );
+      })}
 
       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 20 }}>
         <button onClick={onClose} style={{ padding: '9px 18px', borderRadius: 8, fontWeight: 600, fontSize: 13, background: 'transparent', color: 'var(--text-mid)', border: '1px solid var(--border)', cursor: 'pointer', fontFamily: 'var(--font-ui)' }}>
@@ -189,7 +209,7 @@ const Dashboard: React.FC = () => {
 
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
         {/* Page header */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '20px 48px 0 28px', flexShrink: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '20px 28px 0', flexShrink: 0 }}>
           <div>
             <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-dark)', letterSpacing: '-0.02em' }}>
               Welcome back,{' '}
@@ -211,7 +231,7 @@ const Dashboard: React.FC = () => {
         </div>
 
         {/* Scrollable body */}
-        <div style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', padding: '20px 48px 32px 28px', display: 'flex', flexDirection: 'column', gap: 24 }}>
+        <div style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', padding: '20px 28px 32px', display: 'flex', flexDirection: 'column', gap: 24 }}>
 
           {/* Stat strip */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 12 }}>

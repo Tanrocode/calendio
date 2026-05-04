@@ -564,11 +564,14 @@ const Landing: React.FC = () => {
       {/* ── FOOTER ── */}
       <section style={{ background: 'var(--plum)', padding: '100px 48px', textAlign: 'center' }}>
         <div style={{ maxWidth: 700, margin: '0 auto' }}>
-          <div style={{ fontFamily: 'var(--font-brand)', fontSize: 'clamp(28px,4vw,48px)', fontWeight: 600, color: 'white', lineHeight: 1.2, marginBottom: 16, fontStyle: 'italic' }}>
-            "High-tech automation that feels like a human conversation."
-          </div>
-          <div style={{ fontSize: 16, color: 'rgba(255,255,255,0.55)', marginBottom: 48, lineHeight: 1.6 }}>
-            No engineers needed. No long setup. Just your business, always answering.
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12, marginBottom: 48 }}>
+            <div style={{ width: 40, height: 40, background: 'rgba(255,255,255,0.15)', border: '1px solid rgba(255,255,255,0.2)', borderRadius: 11, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <svg width="18" height="18" viewBox="0 0 16 16" fill="none">
+                <circle cx="8" cy="8" r="3" fill="white"/>
+                <path d="M8 2v2M8 12v2M2 8h2M12 8h2" stroke="white" strokeWidth="1.5" strokeLinecap="round"/>
+              </svg>
+            </div>
+            <span style={{ fontFamily: 'var(--font-brand)', fontSize: 32, fontWeight: 700, color: 'white', letterSpacing: '-0.02em' }}>Calendio</span>
           </div>
           <div style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.15)', borderRadius: 28, padding: '48px 40px', backdropFilter: 'blur(20px)' }}>
             <div style={{ fontFamily: 'var(--font-brand)', fontSize: 28, fontWeight: 700, color: 'white', marginBottom: 10 }}>Ready to never miss a call?</div>

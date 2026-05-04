@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import re
 import logging
@@ -71,18 +72,41 @@ def _day_range(s: str) -> List[int]:
     return [day] if day is not None else list(range(7))
 
 
+_WEEKDAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+
+
 def _within_business_hours(start_dt: datetime, end_dt: datetime, hours_str: str) -> Tuple[bool, str]:
     """Return (ok, reason). reason is non-empty only when ok=False."""
     if not hours_str:
         return True, ""
+
+    # New structured JSON format: {"Mon": {"open": "09:00", "close": "17:00"}, "Sat": null, ...}
+    try:
+        week = json.loads(hours_str)
+        if isinstance(week, dict):
+            day_name = _WEEKDAY_NAMES[start_dt.weekday()]
+            day_data = week.get(day_name)
+            if not day_data:
+                return False, f"The business is closed on {day_name}s."
+            opens = time_type.fromisoformat(day_data["open"])
+            closes = time_type.fromisoformat(day_data["close"])
+            appt_start = start_dt.timetz().replace(tzinfo=None)
+            appt_end = end_dt.timetz().replace(tzinfo=None)
+            if appt_start >= opens and appt_end <= closes:
+                return True, ""
+            return False, (
+                f"That time is outside business hours. "
+                f"On {day_name}s the business is open {day_data['open']}–{day_data['close']}. "
+                "Please offer a time within those hours."
+            )
+    except (json.JSONDecodeError, KeyError, ValueError, TypeError):
+        pass
+
+    # Legacy plain-text format: "Mon-Fri 9am-5pm, Sat 10am-4pm"
     appt_day = start_dt.weekday()
     appt_start = start_dt.timetz().replace(tzinfo=None)
     appt_end = end_dt.timetz().replace(tzinfo=None)
     for segment in hours_str.split(","):
-        # Accept common variants:
-        # - Mon-Fri 9am-5pm
-        # - Mon-Fri 9:00 AM - 5:00 PM
-        # - Tue 10 - 18
         m = re.match(
             r"^([A-Za-z]+(?:\s*-\s*[A-Za-z]+)?)\s+(.+?)\s*[-–]\s*(.+)$",
             segment.strip(),
