@@ -453,7 +453,7 @@ const Landing: React.FC = () => {
         <div style={{ padding: '40px 48px', textAlign: 'center', maxWidth: 1200, margin: '0 auto', width: '100%' }}>
           <div style={{ display: 'inline-flex', alignItems: 'center', gap: 10, marginBottom: 32, fontSize: 14, fontWeight: 500, color: 'var(--text-soft)' }}>
             <span style={{ color: 'var(--plum-mid)', fontSize: 14 }}>★★★★★</span>
-            Trusted by 600+ small businesses
+            Trusted by businesses across the Bay Area
           </div>
           <h1 style={{
             fontFamily: 'var(--font-brand)', fontSize: 'clamp(48px,6vw,80px)', fontWeight: 700,
