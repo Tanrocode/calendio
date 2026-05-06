@@ -8,6 +8,23 @@ from .supabase_client import supabase
 _bearer = HTTPBearer()
 
 
+def get_user_from_token(token: str) -> "CurrentUser":
+    """Verify a raw Supabase JWT and return the local user record.
+    Used by routes that optionally accept a Bearer token (e.g. Google OAuth flow)."""
+    response = supabase.auth.get_user(token)
+    if not response.user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    supabase_uid = response.user.id
+    email = response.user.email or ""
+    result = supabase.table("users").select("*").eq("supabase_uid", supabase_uid).execute()
+    if result.data:
+        row = result.data[0]
+        return CurrentUser(id=row["id"], supabase_uid=row["supabase_uid"], email=row["email"])
+    insert = supabase.table("users").insert({"supabase_uid": supabase_uid, "email": email}).execute()
+    row = insert.data[0]
+    return CurrentUser(id=row["id"], supabase_uid=row["supabase_uid"], email=row["email"])
+
+
 @dataclass
 class CurrentUser:
     id: int

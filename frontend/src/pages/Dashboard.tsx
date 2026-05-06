@@ -1,13 +1,17 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { getMetrics, getAgents, createAgent, deleteAgent } from '../services/api';
-import type { AgentConfig } from '../services/api';
+import { getMetrics, getAgents, createAgent, deleteAgent, getRecentActivity } from '../services/api';
+import type { AgentConfig, ConversationRow } from '../services/api';
 import Sidebar from '../components/Sidebar';
 import BusinessHoursEditor from '../components/BusinessHoursEditor';
 import { persistAppUserFromSession, supabase } from '../lib/supabaseClient';
+import { getUpcomingEvents, type CalendarEventRow } from '../lib/calendarDemoApi';
 
 type Metrics = { total_conversations: number; total_appointments_created: number };
 const EMPTY_FORM = { name: '', services: '', business_hours: '', agent_instructions: '' };
+
+// Shape returned by the dashboard/metrics upcoming_appointments field
+type SupabaseAppt = { customer_name: string; service: string; start_time: string; end_time: string };
 
 /* ── ICONS ── */
 const Ic = {
@@ -15,6 +19,7 @@ const Ic = {
   Trend: () => <svg width="12" height="12" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"/></svg>,
   Chevron: () => <svg width="11" height="11" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7"/></svg>,
   X: () => <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>,
+  Clock: () => <svg width="11" height="11" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><path strokeLinecap="round" d="M12 6v6l4 2"/></svg>,
 };
 
 /* ── STAT TILE ── */
@@ -92,13 +97,11 @@ const CreateModal: React.FC<{
           <Ic.X />
         </button>
       </div>
-
       {error && (
         <div style={{ background: 'var(--red-light)', border: '1px solid #FECACA', color: 'var(--red)', borderRadius: 8, padding: '10px 14px', fontSize: 13, marginBottom: 16 }}>
           {error}
         </div>
       )}
-
       {[...FIELDS_BEFORE, ...FIELDS_AFTER].map(({ key, label, placeholder, required, textarea, rows }) => {
         const isBusiness = key === 'agent_instructions';
         return (
@@ -135,7 +138,6 @@ const CreateModal: React.FC<{
           </React.Fragment>
         );
       })}
-
       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 20 }}>
         <button onClick={onClose} style={{ padding: '9px 18px', borderRadius: 8, fontWeight: 600, fontSize: 13, background: 'transparent', color: 'var(--text-mid)', border: '1px solid var(--border)', cursor: 'pointer', fontFamily: 'var(--font-ui)' }}>
           Cancel
@@ -148,6 +150,168 @@ const CreateModal: React.FC<{
   </div>
 );
 
+/* ── TODAY'S SCHEDULE ── */
+function formatTime(iso: string): string {
+  try {
+    return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+  } catch {
+    return iso;
+  }
+}
+
+// TodaySchedule shows Google Calendar events when connected; falls back to Supabase appointments
+const TodaySchedule: React.FC<{ today: string; supabaseAppts?: SupabaseAppt[] }> = ({ today, supabaseAppts = [] }) => {
+  const navigate = useNavigate();
+  const [events, setEvents] = useState<CalendarEventRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [calConnected, setCalConnected] = useState(false);
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const rows = await getUpcomingEvents({ hours_ahead: 16, max_results: 20 });
+        const todayStr = new Date().toDateString();
+        const todayEvents = rows.filter(ev => new Date(ev.start).toDateString() === todayStr);
+        setEvents(todayEvents);
+        setCalConnected(true);
+      } catch (e: any) {
+        // Only treat 401 as "not connected" — everything else is a real error
+        const status = e?.response?.status;
+        if (status === 401) {
+          setCalConnected(false);
+        } else {
+          // Connected but something else went wrong — still show as connected
+          console.error('Schedule fetch error:', e);
+          setCalConnected(true);
+        }
+      } finally {
+        setLoading(false);
+      }
+    };
+    load();
+  }, []);
+
+  // When Google Calendar is not connected, convert Supabase appointments to display format
+  const todayStr = new Date().toDateString();
+  const fallbackEvents: CalendarEventRow[] = supabaseAppts
+    .filter(a => new Date(a.start_time).toDateString() === todayStr)
+    .map((a, i) => ({
+      id: `supabase-${i}`,
+      summary: a.service || 'Appointment',
+      start: a.start_time,
+      end: a.end_time,
+      html_link: '',
+      description_snippet: a.customer_name || '',
+    }));
+
+  const dateLabel = today.split(',').slice(1).join(',').trim();
+
+  return (
+    <div style={{ background: 'white', border: '1px solid var(--border)', borderRadius: 12, overflow: 'hidden' }}>
+      {/* header */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 20px', borderBottom: '1px solid var(--border)' }}>
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-dark)' }}>Today's Schedule</div>
+          <div style={{ fontSize: 11, color: 'var(--text-soft)', marginTop: 1 }}>{dateLabel}</div>
+        </div>
+        <button
+          onClick={() => navigate('/calendar-demo')}
+          style={{ fontSize: 11, fontWeight: 600, color: 'var(--plum-mid)', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'var(--font-ui)', display: 'flex', alignItems: 'center', gap: 4 }}
+        >
+          Calendar <Ic.Chevron />
+        </button>
+      </div>
+
+      {/* body */}
+      {loading ? (
+        <div style={{ padding: '24px 20px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {[1, 2].map(i => (
+            <div key={i} style={{ height: 44, borderRadius: 8, background: 'var(--lavender-bg)', animation: 'pulse 1.4s ease-in-out infinite' }} />
+          ))}
+        </div>
+      ) : !calConnected && fallbackEvents.length === 0 ? (
+        // No Google Calendar and no Supabase appointments either
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '32px 20px', gap: 8 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-dark)', opacity: 0.35 }}>Not connected</div>
+          <div style={{ fontSize: 12, color: 'var(--text-soft)', textAlign: 'center' }}>Connect Google Calendar to see your schedule</div>
+          <button
+            onClick={() => navigate('/calendar-demo')}
+            style={{ marginTop: 6, padding: '6px 14px', borderRadius: 7, fontSize: 11, fontWeight: 600, background: 'var(--plum-bg)', color: 'var(--plum-mid)', border: '1px solid var(--lavender-dark)', cursor: 'pointer', fontFamily: 'var(--font-ui)' }}
+          >
+            Connect →
+          </button>
+        </div>
+      ) : (calConnected ? events : fallbackEvents).length === 0 ? (
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '32px 20px', gap: 6 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-dark)', opacity: 0.35 }}>All clear today</div>
+          <div style={{ fontSize: 12, color: 'var(--text-soft)' }}>No appointments scheduled</div>
+        </div>
+      ) : (
+        <div style={{ padding: '10px 0' }}>
+          {/* Show Google Calendar events when connected; otherwise show Supabase appointments */}
+          {(calConnected ? events : fallbackEvents).map((ev, i, arr) => {
+            const isNext = i === 0;
+            return (
+              <div
+                key={ev.id}
+                style={{
+                  display: 'flex', alignItems: 'flex-start', gap: 12,
+                  padding: '9px 20px',
+                  borderBottom: i < arr.length - 1 ? '1px solid var(--lavender-bg)' : 'none',
+                  background: isNext ? 'var(--plum-bg)' : 'white',
+                  transition: 'background 0.1s',
+                }}
+              >
+                {/* time column */}
+                <div style={{ flexShrink: 0, width: 54, textAlign: 'right' }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: isNext ? 'var(--plum-mid)' : 'var(--text-mid)' }}>
+                    {formatTime(ev.start)}
+                  </div>
+                  <div style={{ fontSize: 10, color: 'var(--text-soft)', marginTop: 1 }}>
+                    {formatTime(ev.end)}
+                  </div>
+                </div>
+
+                {/* accent line */}
+                <div style={{
+                  width: 3, flexShrink: 0, borderRadius: 4, alignSelf: 'stretch',
+                  background: isNext ? 'var(--plum-mid)' : 'var(--lavender-dark)',
+                  minHeight: 32,
+                }} />
+
+                {/* event info */}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{
+                    fontSize: 12, fontWeight: 600,
+                    color: isNext ? 'var(--plum)' : 'var(--text-dark)',
+                    whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                  }}>
+                    {ev.summary || '(no title)'}
+                  </div>
+                  {ev.description_snippet && (
+                    <div style={{ fontSize: 11, color: 'var(--text-soft)', marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {ev.description_snippet}
+                    </div>
+                  )}
+                </div>
+
+                {/* "next" badge */}
+                {isNext && (
+                  <span style={{
+                    flexShrink: 0, fontSize: 9, fontWeight: 700, padding: '2px 7px',
+                    borderRadius: 100, background: 'var(--plum)', color: 'white',
+                    letterSpacing: '0.05em', textTransform: 'uppercase', alignSelf: 'center',
+                  }}>Next</span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+};
+
 /* ── DASHBOARD ── */
 const Dashboard: React.FC = () => {
   const navigate = useNavigate();
@@ -158,6 +322,10 @@ const Dashboard: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [userName, setUserName] = useState('');
+  const [recentActivity, setRecentActivity] = useState<ConversationRow[]>([]);
+  const [activityLoading, setActivityLoading] = useState(true);
+  // Upcoming appointments from Supabase — used as fallback in TodaySchedule when Google Calendar isn't connected
+  const [upcomingAppts, setUpcomingAppts] = useState<SupabaseAppt[]>([]);
 
   useEffect(() => {
     const init = async () => {
@@ -167,8 +335,21 @@ const Dashboard: React.FC = () => {
       const fullName = session.user.user_metadata?.full_name || session.user.email || '';
       setUserName(fullName.split(' ')[0]);
       const [metricsResult, agentsResult] = await Promise.allSettled([getMetrics(), getAgents()]);
-      if (metricsResult.status === 'fulfilled') setMetrics(metricsResult.value.metrics);
+      if (metricsResult.status === 'fulfilled') {
+        setMetrics(metricsResult.value.metrics);
+        setUpcomingAppts(metricsResult.value.upcoming_appointments ?? []);
+      }
       if (agentsResult.status === 'fulfilled') setAgents(agentsResult.value);
+
+      // Fetch recent conversations for the activity feed
+      try {
+        const activity = await getRecentActivity();
+        setRecentActivity(activity);
+      } catch {
+        // Non-fatal — activity feed just stays empty
+      } finally {
+        setActivityLoading(false);
+      }
     };
     init();
   }, []);
@@ -194,13 +375,10 @@ const Dashboard: React.FC = () => {
   };
 
   const today = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
-
   const rate = metrics.total_conversations > 0
     ? Math.round((metrics.total_appointments_created / metrics.total_conversations) * 100) + '%'
     : '—';
-
   const activeCount = agents.filter(a => a.is_active !== false).length;
-
   const agentColors = ['var(--plum)', 'var(--plum-mid)', 'var(--plum-light)'];
 
   return (
@@ -316,36 +494,64 @@ const Dashboard: React.FC = () => {
 
           {/* Bottom row */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 320px', gap: 16 }}>
-            {/* Recent Activity */}
+            {/* Recent Activity — populated from conversations table after each chat */}
             <div style={{ background: 'white', border: '1px solid var(--border)', borderRadius: 12, overflow: 'hidden' }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 20px', borderBottom: '1px solid var(--border)' }}>
                 <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-dark)' }}>Recent Activity</div>
-                <button style={{ fontSize: 11, fontWeight: 600, color: 'var(--plum-mid)', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'var(--font-ui)', display: 'flex', alignItems: 'center', gap: 4 }}>
-                  View all <Ic.Chevron />
-                </button>
+                <span style={{ fontSize: 11, color: 'var(--text-soft)' }}>{recentActivity.length} conversation{recentActivity.length !== 1 ? 's' : ''}</span>
               </div>
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '40px 20px', gap: 8 }}>
-                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-dark)', opacity: 0.35 }}>No activity yet</div>
-                <div style={{ fontSize: 12, color: 'var(--text-soft)' }}>Call logs will appear here once your agent handles calls</div>
-              </div>
+              {activityLoading ? (
+                <div style={{ padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  {[1, 2, 3].map(i => (
+                    <div key={i} style={{ height: 52, borderRadius: 8, background: 'var(--lavender-bg)', animation: 'pulse 1.4s ease-in-out infinite' }} />
+                  ))}
+                </div>
+              ) : recentActivity.length === 0 ? (
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '40px 20px', gap: 8 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-dark)', opacity: 0.35 }}>No activity yet</div>
+                  <div style={{ fontSize: 12, color: 'var(--text-soft)' }}>Conversations will appear here once your agent handles chats</div>
+                </div>
+              ) : (
+                <div style={{ maxHeight: 320, overflowY: 'auto' }}>
+                  {recentActivity.map((conv, i) => {
+                    const ts = conv.timestamp
+                      ? new Date(conv.timestamp).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+                      : '';
+                    return (
+                      <div key={conv.id ?? i} style={{
+                        padding: '12px 20px',
+                        borderBottom: i < recentActivity.length - 1 ? '1px solid var(--lavender-bg)' : 'none',
+                        display: 'flex', flexDirection: 'column', gap: 4,
+                      }}>
+                        {/* Customer message */}
+                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+                          <div style={{ flexShrink: 0, width: 20, height: 20, borderRadius: '50%', background: 'var(--text-soft)', color: 'white', fontSize: 8, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>U</div>
+                          <div style={{ fontSize: 12, color: 'var(--text-dark)', flex: 1, lineHeight: 1.4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {conv.message}
+                          </div>
+                        </div>
+                        {/* Agent reply */}
+                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+                          <div style={{ flexShrink: 0, width: 20, height: 20, borderRadius: '50%', background: 'var(--plum)', color: 'white', fontSize: 8, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>A</div>
+                          <div style={{ fontSize: 12, color: 'var(--text-soft)', flex: 1, lineHeight: 1.4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {conv.response}
+                          </div>
+                        </div>
+                        {/* Timestamp */}
+                        {ts && (
+                          <div style={{ fontSize: 10, color: 'var(--text-soft)', marginLeft: 28, display: 'flex', alignItems: 'center', gap: 4 }}>
+                            <Ic.Clock />{ts}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
 
-            {/* Today's Schedule */}
-            <div style={{ background: 'white', border: '1px solid var(--border)', borderRadius: 12, overflow: 'hidden' }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 20px', borderBottom: '1px solid var(--border)' }}>
-                <div>
-                  <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-dark)' }}>Today's Schedule</div>
-                  <div style={{ fontSize: 11, color: 'var(--text-soft)', marginTop: 1 }}>{today.split(',').slice(1).join(',').trim()}</div>
-                </div>
-                <button style={{ fontSize: 11, fontWeight: 600, color: 'var(--plum-mid)', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'var(--font-ui)', display: 'flex', alignItems: 'center', gap: 4 }}>
-                  Calendar <Ic.Chevron />
-                </button>
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '40px 20px', gap: 8 }}>
-                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-dark)', opacity: 0.35 }}>No appointments today</div>
-                <div style={{ fontSize: 12, color: 'var(--text-soft)' }}>Connect Google Calendar to see your schedule</div>
-              </div>
-            </div>
+            {/* Today's Schedule — Google Calendar when connected, Supabase appointments as fallback */}
+            <TodaySchedule today={today} supabaseAppts={upcomingAppts} />
           </div>
         </div>
       </div>

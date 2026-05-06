@@ -1,9 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { getAgent, deleteAgent, chatWithAgent, getCalendarStatus, getCalendarAuthUrl } from '../services/api';
+import { getAgent, deleteAgent, chatWithAgent, getCalendarStatus, getCalendarAuthUrl, updateAgent } from '../services/api';
 import type { AgentConfig } from '../services/api';
 import Sidebar from '../components/Sidebar';
-import { parseWeekHours, fmtTime } from '../components/BusinessHoursEditor';
+import BusinessHoursEditor, { parseWeekHours, fmtTime } from '../components/BusinessHoursEditor';
 
 /* ── ICONS ── */
 const Ic = {
@@ -218,6 +218,12 @@ const AgentPage: React.FC = () => {
   const [calendarLoading, setCalendarLoading] = useState(false);
   const [tone, setTone] = useState('Friendly');
 
+  // Edit mode — allows updating name, services, hours, instructions inline
+  const [editMode, setEditMode] = useState(false);
+  const [editForm, setEditForm] = useState({ name: '', services: '', business_hours: '', agent_instructions: '' });
+  const [editSaving, setEditSaving] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
+
   useEffect(() => {
     if (!id) return;
     getAgent(Number(id)).then(setAgent).catch(() => setPageError(true)).finally(() => setLoading(false));
@@ -240,6 +246,42 @@ const AgentPage: React.FC = () => {
     if (!agent) return;
     await deleteAgent(agent.id);
     navigate('/dashboard');
+  };
+
+  // Enter edit mode pre-filled with current agent values
+  const startEdit = () => {
+    if (!agent) return;
+    setEditForm({
+      name: agent.name,
+      services: agent.services ?? '',
+      business_hours: agent.business_hours ?? '',
+      agent_instructions: agent.agent_instructions ?? '',
+    });
+    setEditError(null);
+    setEditMode(true);
+  };
+
+  const cancelEdit = () => { setEditMode(false); setEditError(null); };
+
+  // Save edits back to the API and update local state so UI reflects changes immediately
+  const saveEdit = async () => {
+    if (!agent) return;
+    if (!editForm.name.trim()) { setEditError('Agent name is required.'); return; }
+    setEditSaving(true);
+    try {
+      const updated = await updateAgent(agent.id, {
+        name: editForm.name.trim(),
+        services: editForm.services || undefined,
+        business_hours: editForm.business_hours || undefined,
+        agent_instructions: editForm.agent_instructions || undefined,
+      });
+      setAgent(updated);
+      setEditMode(false);
+    } catch {
+      setEditError('Failed to save. Please try again.');
+    } finally {
+      setEditSaving(false);
+    }
   };
 
   if (loading) return (
@@ -308,26 +350,67 @@ const AgentPage: React.FC = () => {
           {/* LEFT PANEL */}
           <div style={{ borderRight: '1px solid var(--border)', overflowY: 'auto', overflowX: 'hidden', background: 'white', display: 'flex', flexDirection: 'column' }}>
 
-            {/* Identity */}
+            {/* Identity + Edit toggle */}
             <div style={panelSection}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4 }}>
                 <div style={{ width: 36, height: 36, background: 'var(--plum)', borderRadius: 9, color: 'white', fontSize: 12, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, letterSpacing: '0.02em' }}>{init}</div>
-                <div>
+                <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-dark)', letterSpacing: '-0.01em' }}>{agent.name}</div>
                   <div style={{ fontSize: 11, color: 'var(--text-soft)', marginTop: 1 }}>Voice Agent · {tone}</div>
                 </div>
+                {/* Toggle edit mode */}
+                {!editMode ? (
+                  <button onClick={startEdit} style={{ fontSize: 11, fontWeight: 600, color: 'var(--plum-mid)', background: 'var(--plum-bg)', border: '1px solid var(--lavender-dark)', borderRadius: 6, padding: '4px 10px', cursor: 'pointer', fontFamily: 'var(--font-ui)', flexShrink: 0 }}>
+                    Edit
+                  </button>
+                ) : (
+                  <button onClick={cancelEdit} style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-soft)', background: 'none', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 10px', cursor: 'pointer', fontFamily: 'var(--font-ui)', flexShrink: 0 }}>
+                    Cancel
+                  </button>
+                )}
               </div>
+              {/* Error banner inside edit mode */}
+              {editMode && editError && (
+                <div style={{ marginTop: 8, fontSize: 12, color: 'var(--red)', background: 'var(--red-light)', border: '1px solid #FECACA', borderRadius: 6, padding: '6px 10px' }}>
+                  {editError}
+                </div>
+              )}
+              {/* Name field in edit mode */}
+              {editMode && (
+                <div style={{ marginTop: 12 }}>
+                  <label style={fieldLabelStyle}>Agent name *</label>
+                  <input
+                    value={editForm.name}
+                    onChange={e => setEditForm(f => ({ ...f, name: e.target.value }))}
+                    style={fieldInputStyle}
+                    onFocus={e => (e.target.style.borderColor = 'var(--plum-xlight)')}
+                    onBlur={e => (e.target.style.borderColor = 'var(--lavender-dark)')}
+                  />
+                </div>
+              )}
             </div>
 
-            {/* Services */}
+            {/* Services — view or edit */}
             <div style={panelSection}>
               <div style={panelSectionTitle}>Services Offered</div>
-              <div style={{ fontSize: 13, color: 'var(--text-dark)', fontWeight: 500, lineHeight: 1.7 }}>
-                {servicesList.length > 0 ? servicesList.join(', ') : <span style={{ color: 'var(--text-soft)', fontStyle: 'italic' }}>No services configured</span>}
-              </div>
+              {editMode ? (
+                <textarea
+                  rows={3}
+                  value={editForm.services}
+                  onChange={e => setEditForm(f => ({ ...f, services: e.target.value }))}
+                  placeholder="e.g. Haircut (30 min), Color (90 min)"
+                  style={{ ...fieldInputStyle, resize: 'vertical' }}
+                  onFocus={e => (e.target.style.borderColor = 'var(--plum-xlight)')}
+                  onBlur={e => (e.target.style.borderColor = 'var(--lavender-dark)')}
+                />
+              ) : (
+                <div style={{ fontSize: 13, color: 'var(--text-dark)', fontWeight: 500, lineHeight: 1.7 }}>
+                  {servicesList.length > 0 ? servicesList.join(', ') : <span style={{ color: 'var(--text-soft)', fontStyle: 'italic' }}>No services configured</span>}
+                </div>
+              )}
             </div>
 
-            {/* Tone */}
+            {/* Agent Tone */}
             <div style={panelSection}>
               <div style={panelSectionTitle}>Agent Tone</div>
               <div style={{ display: 'flex', gap: 6 }}>
@@ -344,21 +427,48 @@ const AgentPage: React.FC = () => {
               </div>
             </div>
 
-            {/* Business Hours */}
+            {/* Business Hours — view or edit */}
             <div style={panelSection}>
               <div style={panelSectionTitle}>Business Hours</div>
-              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                <tbody>
-                  {hours.map(h => (
-                    <tr key={h.d}>
-                      <td style={{ padding: '4px 0', fontSize: 12, color: 'var(--text-soft)', fontWeight: 500, width: 36 }}>{h.d}</td>
-                      <td style={{ padding: '4px 0', fontSize: 12, fontWeight: 600, color: h.t ? 'var(--text-dark)' : 'var(--text-soft)', fontStyle: h.t ? 'normal' : 'italic', textAlign: 'right' }}>
-                        {h.t || 'Closed'}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              {editMode ? (
+                <BusinessHoursEditor
+                  value={editForm.business_hours}
+                  onChange={v => setEditForm(f => ({ ...f, business_hours: v }))}
+                />
+              ) : (
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <tbody>
+                    {hours.map(h => (
+                      <tr key={h.d}>
+                        <td style={{ padding: '4px 0', fontSize: 12, color: 'var(--text-soft)', fontWeight: 500, width: 36 }}>{h.d}</td>
+                        <td style={{ padding: '4px 0', fontSize: 12, fontWeight: 600, color: h.t ? 'var(--text-dark)' : 'var(--text-soft)', fontStyle: h.t ? 'normal' : 'italic', textAlign: 'right' }}>
+                          {h.t || 'Closed'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
+            {/* Agent Instructions — always show, editable in edit mode */}
+            <div style={panelSection}>
+              <div style={panelSectionTitle}>Instructions</div>
+              {editMode ? (
+                <textarea
+                  rows={4}
+                  value={editForm.agent_instructions}
+                  onChange={e => setEditForm(f => ({ ...f, agent_instructions: e.target.value }))}
+                  placeholder="Tone, FAQs, cancellation policy, anything the agent should know…"
+                  style={{ ...fieldInputStyle, resize: 'vertical' }}
+                  onFocus={e => (e.target.style.borderColor = 'var(--plum-xlight)')}
+                  onBlur={e => (e.target.style.borderColor = 'var(--lavender-dark)')}
+                />
+              ) : (
+                <div style={{ fontSize: 12, color: agent.agent_instructions ? 'var(--text-dark)' : 'var(--text-soft)', lineHeight: 1.6, fontStyle: agent.agent_instructions ? 'normal' : 'italic' }}>
+                  {agent.agent_instructions || 'No instructions set'}
+                </div>
+              )}
             </div>
 
             {/* Integrations */}
@@ -382,6 +492,25 @@ const AgentPage: React.FC = () => {
                 )}
               </div>
             </div>
+
+            {/* Save / Cancel in edit mode */}
+            {editMode && (
+              <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)', display: 'flex', gap: 8 }}>
+                <button
+                  onClick={saveEdit}
+                  disabled={editSaving}
+                  style={{ flex: 1, background: 'var(--plum)', color: 'white', border: 'none', borderRadius: 8, padding: '9px 0', fontSize: 12, fontWeight: 600, cursor: editSaving ? 'not-allowed' : 'pointer', opacity: editSaving ? 0.65 : 1, fontFamily: 'var(--font-ui)' }}
+                >
+                  {editSaving ? 'Saving…' : 'Save Changes'}
+                </button>
+                <button
+                  onClick={cancelEdit}
+                  style={{ flex: 1, background: 'none', color: 'var(--text-mid)', border: '1px solid var(--border)', borderRadius: 8, padding: '9px 0', fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'var(--font-ui)' }}
+                >
+                  Cancel
+                </button>
+              </div>
+            )}
 
             {/* Danger Zone */}
             <div style={{ ...panelSection, marginTop: 'auto' }}>
@@ -415,6 +544,20 @@ const panelSectionTitle: React.CSSProperties = {
   fontSize: 10, fontWeight: 700, letterSpacing: '0.09em',
   textTransform: 'uppercase', color: 'var(--text-soft)',
   marginBottom: 12, opacity: 0.7,
+};
+
+// Shared styles for edit-mode form fields
+const fieldLabelStyle: React.CSSProperties = {
+  display: 'block', fontSize: 10, fontWeight: 600, color: 'var(--text-soft)',
+  textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 5,
+};
+
+const fieldInputStyle: React.CSSProperties = {
+  width: '100%', padding: '8px 10px',
+  background: 'var(--lavender-bg)', border: '1px solid var(--lavender-dark)',
+  borderRadius: 7, fontSize: 12, outline: 'none',
+  fontFamily: 'var(--font-ui)', color: 'var(--text-dark)',
+  boxSizing: 'border-box',
 };
 
 export default AgentPage;

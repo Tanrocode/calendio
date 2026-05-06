@@ -1,7 +1,8 @@
+import logging
 import time
 from typing import Dict, Optional, Tuple
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Header, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
@@ -10,10 +11,14 @@ from pydantic import BaseModel
 from dotenv import load_dotenv
 import os
 
+from ..supabase_client import supabase
+
 load_dotenv()
 os.environ.setdefault('OAUTHLIB_INSECURE_TRANSPORT', '1')
 
 router = APIRouter(tags=['google-oauth'])
+
+logger = logging.getLogger("uvicorn.error")
 
 FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:3000')
 SCOPES = [
@@ -97,15 +102,32 @@ def _safe_oauth_next_path(next: Optional[str]) -> str:
 
 
 @router.get('/auth/url')
-def auth_url(request: Request, next: Optional[str] = Query(None)):
+def auth_url(
+    request: Request,
+    next: Optional[str] = Query(None),
+    authorization: Optional[str] = Header(None),  # Supabase JWT — used to tie tokens to this user in DB
+):
     redirect_uri, frontend = _redirect_uri_and_frontend_for_request(request)
     flow = get_flow(redirect_uri)
     url, state = flow.authorization_url(access_type='offline', prompt='consent')
+
+    # If the caller sent their Supabase JWT, resolve their internal user ID now.
+    # We store it in the pending state so the OAuth callback can save tokens to Supabase.
+    user_db_id: Optional[int] = None
+    if authorization and authorization.startswith('Bearer '):
+        try:
+            from ..supabase_auth import get_user_from_token
+            user = get_user_from_token(authorization[7:])
+            user_db_id = user.id
+        except Exception as exc:
+            logger.warning("Could not resolve user from JWT during OAuth init: %s", exc)
+
     _pending_store(state, {
         'code_verifier': flow.code_verifier,
         'redirect_uri': redirect_uri,
         'frontend': frontend,
         'next_path': _safe_oauth_next_path(next),
+        'user_db_id': user_db_id,  # may be None if no JWT was provided
     })
     return {'url': url}
 
@@ -125,6 +147,20 @@ def callback(request: Request):
         credentials = flow.credentials
         request.session['token'] = credentials.token
         request.session['refresh_token'] = credentials.refresh_token
+
+        # Persist Google tokens to Supabase so we can restore them when the session
+        # cookie expires (browser close, server restart, etc.)
+        user_db_id = pending.get('user_db_id')
+        if user_db_id:
+            try:
+                supabase.table("users").update({
+                    "google_access_token": credentials.token,
+                    "google_refresh_token": credentials.refresh_token,
+                }).eq("id", user_db_id).execute()
+            except Exception as exc:
+                # Non-fatal — session cookie will still work this session
+                logger.warning("Could not persist Google tokens to Supabase: %s", exc)
+
         front = pending['frontend']
         next_path = _safe_oauth_next_path(pending['next_path'])
         return RedirectResponse(url=f'{front}{next_path}')

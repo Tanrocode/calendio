@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import os
 import re
 import logging
@@ -72,41 +71,18 @@ def _day_range(s: str) -> List[int]:
     return [day] if day is not None else list(range(7))
 
 
-_WEEKDAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
-
-
 def _within_business_hours(start_dt: datetime, end_dt: datetime, hours_str: str) -> Tuple[bool, str]:
     """Return (ok, reason). reason is non-empty only when ok=False."""
     if not hours_str:
         return True, ""
-
-    # New structured JSON format: {"Mon": {"open": "09:00", "close": "17:00"}, "Sat": null, ...}
-    try:
-        week = json.loads(hours_str)
-        if isinstance(week, dict):
-            day_name = _WEEKDAY_NAMES[start_dt.weekday()]
-            day_data = week.get(day_name)
-            if not day_data:
-                return False, f"The business is closed on {day_name}s."
-            opens = time_type.fromisoformat(day_data["open"])
-            closes = time_type.fromisoformat(day_data["close"])
-            appt_start = start_dt.timetz().replace(tzinfo=None)
-            appt_end = end_dt.timetz().replace(tzinfo=None)
-            if appt_start >= opens and appt_end <= closes:
-                return True, ""
-            return False, (
-                f"That time is outside business hours. "
-                f"On {day_name}s the business is open {day_data['open']}–{day_data['close']}. "
-                "Please offer a time within those hours."
-            )
-    except (json.JSONDecodeError, KeyError, ValueError, TypeError):
-        pass
-
-    # Legacy plain-text format: "Mon-Fri 9am-5pm, Sat 10am-4pm"
     appt_day = start_dt.weekday()
     appt_start = start_dt.timetz().replace(tzinfo=None)
     appt_end = end_dt.timetz().replace(tzinfo=None)
     for segment in hours_str.split(","):
+        # Accept common variants:
+        # - Mon-Fri 9am-5pm
+        # - Mon-Fri 9:00 AM - 5:00 PM
+        # - Tue 10 - 18
         m = re.match(
             r"^([A-Za-z]+(?:\s*-\s*[A-Za-z]+)?)\s+(.+?)\s*[-–]\s*(.+)$",
             segment.strip(),
@@ -218,12 +194,15 @@ class SchedulingAgent:
         if self.config.agent_instructions:
             parts.append(f"Instructions from business: {self.config.agent_instructions}")
         parts.append(
-            "Help callers book appointments and answer questions about the business. "
+            "You help callers book, reschedule, or cancel appointments, and answer any questions about the business. "
+            "When asked about hours, services, pricing, or any other business details, share what you know from the "
+            "information above — be warm, helpful, and informative. "
             "IMPORTANT: Never book outside business hours — if a caller requests a time outside those hours, "
-            "decline politely and suggest the nearest available time within hours. "
+            "decline politely and suggest the nearest available slot within hours. "
             "Always check availability before booking. Use ISO 8601 datetime strings in the business timezone for all tool calls. "
-            "You can list upcoming events, search events by text (e.g. phone number in the description), "
-            "delete an event by its id, or reschedule by id with new start/end times."
+            "To reschedule: first use list_calendar_events or find_events_by_text to locate the event id, then call "
+            "reschedule_calendar_event with the id and new times. "
+            "To cancel: find the event id the same way, then call delete_calendar_event."
         )
         return " ".join(parts)
 
@@ -455,8 +434,11 @@ def delete_calendar_event(business_id: int, event_id: str) -> Dict[str, Any]:
     calendar_id, _tz = _get_calendar_id_and_timezone()
     creds = _get_credentials()
     service = build("calendar", "v3", credentials=creds)
-    # Permanent delete in Google Calendar (does not auto-remove Supabase rows if you use them).
     service.events().delete(calendarId=calendar_id, eventId=event_id).execute()
+
+    # Mirror the delete in Supabase so appointment records stay in sync
+    supabase.table("appointments").delete().eq("google_event_id", event_id).execute()
+
     return {"deleted": True, "event_id": event_id}
 
 
@@ -489,6 +471,13 @@ def reschedule_calendar_event(
         .execute()
     )
     sid, eid = _event_start_end_strings(updated)
+
+    # Keep Supabase appointments table in sync with the rescheduled times
+    supabase.table("appointments").update({
+        "start_time": new_start_dt.replace(tzinfo=None).isoformat(),
+        "end_time": new_end_dt.replace(tzinfo=None).isoformat(),
+    }).eq("google_event_id", event_id).execute()
+
     return {
         "google_event_id": updated.get("id"),
         "google_event_link": updated.get("htmlLink"),

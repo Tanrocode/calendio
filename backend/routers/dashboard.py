@@ -45,3 +45,20 @@ def get_metrics(current_user: CurrentUser = Depends(get_current_user)):
         },
         "upcoming_appointments": upcoming,
     }
+
+
+@router.get("/dashboard/recent-activity")
+def get_recent_activity(
+    current_user: CurrentUser = Depends(get_current_user),
+    limit: int = 20,
+):
+    """Return the most recent conversations for the dashboard Recent Activity feed."""
+    result = (
+        supabase.table("conversations")
+        .select("*")
+        .eq("user_id", current_user.id)
+        .order("timestamp", desc=True)
+        .limit(limit)
+        .execute()
+    )
+    return {"conversations": result.data}

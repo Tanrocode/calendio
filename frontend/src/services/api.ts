@@ -82,12 +82,50 @@ export const deleteAgent = async (id: number): Promise<void> => {
   agentsCache = null; // invalidate cache
 };
 
+// Update editable fields on an existing agent (name, services, hours, instructions, active toggle)
+export const updateAgent = async (
+  id: number,
+  data: {
+    name?: string;
+    services?: string;
+    business_hours?: string;
+    agent_instructions?: string;
+    is_active?: boolean;
+  }
+): Promise<AgentConfig> => {
+  const headers = await getAuthHeaders();
+  const res = await axios.patch(`/agents/${id}`, data, { headers });
+  agentsCache = null; // invalidate so dashboard re-fetches fresh data
+  return res.data;
+};
+
+export type ConversationRow = {
+  id: number;
+  user_id: number;
+  message: string;
+  response: string;
+  timestamp: string;
+};
+
+// Fetch recent chat conversations for the dashboard Recent Activity section
+export const getRecentActivity = async (): Promise<ConversationRow[]> => {
+  const headers = await getAuthHeaders();
+  const res = await axios.get('/dashboard/recent-activity', { headers });
+  return res.data.conversations ?? [];
+};
+
 export const getCalendarStatus = async (): Promise<{ connected: boolean }> => {
   const res = await axios.get('/calendar-demo/status', { withCredentials: true });
   return res.data;
 };
 
 export const getCalendarAuthUrl = async (next: string): Promise<{ url: string }> => {
-  const res = await axios.get(`/auth/url?next=${encodeURIComponent(next)}`, { withCredentials: true });
+  // Send both the session cookie (needed for OAuth state) AND the Supabase JWT
+  // so the backend can persist the resulting Google tokens to the database.
+  const headers = await getAuthHeaders();
+  const res = await axios.get(`/auth/url?next=${encodeURIComponent(next)}`, {
+    withCredentials: true,
+    headers,
+  });
   return res.data;
 };
