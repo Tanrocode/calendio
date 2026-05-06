@@ -1,5 +1,6 @@
+import json
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -102,7 +103,9 @@ def agent_chat(
         business_hours=config_data.get("business_hours"),
         agent_instructions=config_data.get("agent_instructions"),
     ))
-    result = agent.run(
+    # Individual turns are NOT logged here — the full conversation is saved as one
+    # record when the user ends the call (POST /{agent_id}/conversations).
+    return agent.run(
         user_id=current_user.id,
         message=body.message,
         history=body.history,
@@ -110,16 +113,39 @@ def agent_chat(
         agent_id=agent_id,
     )
 
-    # Log conversation so Recent Activity on the dashboard can show it
-    try:
-        supabase.table("conversations").insert({
-            "user_id": current_user.id,
-            "message": body.message,
-            "response": result["reply"],
-            "timestamp": datetime.utcnow().isoformat(),
-        }).execute()
 
-        # Increment total_conversations metric
+class SaveConversationBody(BaseModel):
+    # Full transcript — list of {role: "user"|"assistant", content: "..."}
+    messages: List[Dict[str, str]]
+    elapsed_seconds: int = 0
+
+
+@router.post("/{agent_id}/conversations")
+def save_conversation(
+    agent_id: int,
+    body: SaveConversationBody,
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    """Save a complete conversation session when the user ends the call."""
+    user_turns = sum(1 for m in body.messages if m.get("role") == "user")
+
+    ended_at = datetime.utcnow()
+    started_at = ended_at - timedelta(seconds=body.elapsed_seconds)
+
+    # Build a readable summary: first user message truncated
+    first_user = next((m["content"] for m in body.messages if m.get("role") == "user"), None)
+    summary_text = first_user[:200] if first_user else f"{user_turns} message{'s' if user_turns != 1 else ''} exchanged"
+
+    supabase.table("conversations").insert({
+        "agent_id": agent_id,
+        "user_id": current_user.id,
+        "summary": summary_text,
+        "started_at": started_at.isoformat(),
+        "ended_at": ended_at.isoformat(),
+    }).execute()
+
+    # Increment conversation count in metrics
+    try:
         metric = supabase.table("metrics").select("*").eq("user_id", current_user.id).execute()
         if metric.data:
             supabase.table("metrics").update({
@@ -127,15 +153,15 @@ def agent_chat(
             }).eq("user_id", current_user.id).execute()
         else:
             supabase.table("metrics").insert({
+                "agent_id": agent_id,
                 "user_id": current_user.id,
                 "total_conversations": 1,
                 "total_appointments_created": 0,
             }).execute()
     except Exception as exc:
-        # Logging failure shouldn't break the chat response
-        logger.warning("Failed to log conversation: %s", exc)
+        logger.warning("Failed to update metrics after conversation save: %s", exc)
 
-    return result
+    return {"saved": True, "turns": user_turns}
 
 
 @router.patch("/{agent_id}")

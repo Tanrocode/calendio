@@ -1,15 +1,16 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { getAgent, deleteAgent, chatWithAgent, getCalendarStatus, getCalendarAuthUrl, updateAgent } from '../services/api';
+import { getAgent, deleteAgent, updateAgent, chatWithAgent, saveConversation, getCalendarStatus, getCalendarAuthUrl } from '../services/api';
 import type { AgentConfig } from '../services/api';
-import Sidebar from '../components/Sidebar';
 import BusinessHoursEditor, { parseWeekHours, fmtTime } from '../components/BusinessHoursEditor';
+import Sidebar from '../components/Sidebar';
 
 /* ── ICONS ── */
 const Ic = {
   Back: () => <svg width="13" height="13" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7"/></svg>,
   Send: () => <svg width="13" height="13" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/></svg>,
-  Phone: () => <svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8"><path strokeLinecap="round" strokeLinejoin="round" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.948V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 7V5z"/></svg>,
+  Phone: () => <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.948V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 7V5z"/></svg>,
+  HangUp: () => <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1C10.6 21 3 13.4 3 4c0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.3 0 .7-.2 1L6.6 10.8z"/></svg>,
   Cal: () => <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>,
 };
 
@@ -49,26 +50,37 @@ const TypingIndicator: React.FC = () => (
   </div>
 );
 
-const QUICK_PROMPTS = [
-  "I'd like to book an appointment",
-  "What are your available hours?",
-  "Do you have any openings this week?",
-  "Can I reschedule my appointment?",
-];
-
 type Message = { role: 'user' | 'assistant'; content: string; t: string };
+type CallState = 'idle' | 'active' | 'ended';
 
-/* ── RIGHT PANEL / CHAT ── */
+/* ── FORMAT DURATION mm:ss ── */
+function formatDuration(secs: number): string {
+  const m = Math.floor(secs / 60);
+  const s = secs % 60;
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+/* ── RIGHT PANEL / CALL FLOW ── */
 const RightPanel: React.FC<{ agent: AgentConfig; calendarConnected: boolean | null }> = ({ agent, calendarConnected }) => {
+  const [callState, setCallState] = useState<CallState>('idle');
   const [msgs, setMsgs] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
+  const [elapsed, setElapsed] = useState(0);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const init = agent.name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
-  const isEmpty = msgs.length === 0 && !loading;
 
+  // Live call timer — increments every second while the call is active
+  useEffect(() => {
+    if (callState !== 'active') return;
+    const id = setInterval(() => setElapsed(s => s + 1), 1000);
+    return () => clearInterval(id);
+  }, [callState]);
+
+  // Keep chat scrolled to the bottom as new messages arrive
   useEffect(() => {
     if (bottomRef.current) {
       const el = bottomRef.current.parentElement!;
@@ -76,40 +88,133 @@ const RightPanel: React.FC<{ agent: AgentConfig; calendarConnected: boolean | nu
     }
   }, [msgs, loading]);
 
-  const send = async (text?: string) => {
-    const msg = text || input.trim();
-    if (!msg || loading) return;
-    const t = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    const newMsgs = [...msgs, { role: 'user' as const, content: msg, t }];
-    setMsgs(newMsgs);
-    setInput('');
+  // Kick off the call: agent speaks first with an opening greeting
+  const startCall = async () => {
+    setElapsed(0);
+    setCallState('active');
     setLoading(true);
+    const t = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     try {
-      const data = await chatWithAgent(agent.id, msg, msgs.map(m => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.content })));
-      setMsgs(prev => [...prev, { role: 'assistant', content: data.reply, t: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }]);
+      // Sending "Hello" triggers the agent to produce a natural greeting based on
+      // its configured business name, services, and hours
+      const data = await chatWithAgent(agent.id, 'Hello', []);
+      setMsgs([{ role: 'assistant', content: data.reply, t }]);
     } catch {
-      setMsgs(prev => [...prev, { role: 'assistant', content: "Sorry, I'm having a little trouble right now. Could you try again in a moment?", t: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }]);
+      // Fallback greeting if the LLM is unavailable
+      setMsgs([{ role: 'assistant', content: `Hello! Thank you for calling ${agent.name}. How can I help you today?`, t }]);
     }
     setLoading(false);
     inputRef.current?.focus();
   };
 
+  // End the call: save the full transcript as one conversation record
+  const endCall = async () => {
+    // Capture msgs before any state changes
+    const snapshot = msgs;
+    setCallState('ended');
+    setSaveError(null);
+    if (snapshot.length > 0) {
+      try {
+        await saveConversation(
+          agent.id,
+          snapshot.map(m => ({ role: m.role, content: m.content })),
+          elapsed,
+        );
+      } catch (err: unknown) {
+        console.error('Failed to save conversation:', err);
+        const msg = err instanceof Error ? err.message : String(err);
+        setSaveError(msg);
+      }
+    }
+  };
+
+  // Reset back to idle so the user can start a fresh call
+  const resetCall = () => {
+    setMsgs([]);
+    setElapsed(0);
+    setCallState('idle');
+  };
+
+  // Send a user message and get the agent's reply
+  const send = async (text?: string) => {
+    const msg = (text ?? input).trim();
+    if (!msg || loading || callState !== 'active') return;
+    const t = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const newMsgs: Message[] = [...msgs, { role: 'user', content: msg, t }];
+    setMsgs(newMsgs);
+    setInput('');
+    setLoading(true);
+    try {
+      const history = newMsgs.slice(0, -1).map(m => ({ role: m.role, content: m.content }));
+      const data = await chatWithAgent(agent.id, msg, history);
+      setMsgs(prev => [...prev, {
+        role: 'assistant',
+        content: data.reply,
+        t: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      }]);
+    } catch {
+      setMsgs(prev => [...prev, {
+        role: 'assistant',
+        content: "Sorry, I'm having a little trouble. Could you try again?",
+        t: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      }]);
+    }
+    setLoading(false);
+    inputRef.current?.focus();
+  };
+
+  const userTurns = msgs.filter(m => m.role === 'user').length;
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', background: 'var(--page-bg)' }}>
-      {/* Chat topbar */}
+
+      {/* ── TOP BAR ── */}
       <div style={{ background: 'white', borderBottom: '1px solid var(--border)', padding: '12px 24px', display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0 }}>
         <div style={{ width: 32, height: 32, background: 'var(--plum)', borderRadius: 8, color: 'white', fontSize: 11, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{init}</div>
         <div>
           <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-dark)' }}>{agent.name}</div>
-          <div style={{ fontSize: 11, color: 'var(--text-soft)', marginTop: 1 }}>Simulates how your agent responds to real customers</div>
+          <div style={{ fontSize: 11, color: 'var(--text-soft)', marginTop: 1 }}>
+            {callState === 'idle' && 'Ready — press Start Call to begin'}
+            {callState === 'active' && (
+              <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                {/* Red pulsing dot while call is live */}
+                <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--red)', display: 'inline-block', animation: 'pip-pulse 1.2s ease-in-out infinite' }} />
+                Live · {formatDuration(elapsed)}
+              </span>
+            )}
+            {callState === 'ended' && `Ended · ${formatDuration(elapsed)} · ${userTurns} message${userTurns !== 1 ? 's' : ''} · ${saveError ? 'Save failed' : 'Saved'}`}
+          </div>
         </div>
-        <div style={{ marginLeft: 'auto' }}>
-          <StatusPill active={true} />
+
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+          {callState === 'idle' && <StatusPill active={true} />}
+          {callState === 'active' && (
+            /* Red "End Call" button — clearly signals ending the session */
+            <button onClick={endCall} style={{
+              display: 'flex', alignItems: 'center', gap: 6,
+              background: '#DC2626', color: 'white', border: 'none', borderRadius: 8,
+              padding: '7px 16px', fontSize: 12, fontWeight: 700, cursor: 'pointer',
+              fontFamily: 'var(--font-ui)', letterSpacing: '0.01em',
+            }}>
+              <Ic.HangUp /> End Call
+            </button>
+          )}
+          {callState === 'ended' && (
+            <button onClick={resetCall} style={{
+              background: 'var(--plum-bg)', color: 'var(--plum-mid)', border: '1px solid var(--lavender-dark)',
+              borderRadius: 8, padding: '6px 14px', fontSize: 12, fontWeight: 600,
+              cursor: 'pointer', fontFamily: 'var(--font-ui)',
+            }}>
+              New Call
+            </button>
+          )}
         </div>
       </div>
 
-      {/* Chat body */}
+      {/* ── BODY ── */}
       <div style={{ flex: 1, overflowY: 'auto', padding: '24px 32px', display: 'flex', flexDirection: 'column' }}>
+
+        {/* Calendar not connected */}
         {!calendarConnected ? (
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 16, paddingBottom: 32 }}>
             <div style={{ width: 52, height: 52, background: 'white', border: '1px solid var(--border)', borderRadius: 14, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 2px 8px rgba(59,7,100,0.06)' }}>
@@ -119,32 +224,78 @@ const RightPanel: React.FC<{ agent: AgentConfig; calendarConnected: boolean | nu
             </div>
             <div style={{ textAlign: 'center' }}>
               <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-dark)', letterSpacing: '-0.02em' }}>Google Calendar required</div>
-              <div style={{ fontSize: 12, color: 'var(--text-soft)', maxWidth: 300, lineHeight: 1.6, marginTop: 6 }}>Connect your Google Calendar using the panel on the left to start testing.</div>
+              <div style={{ fontSize: 12, color: 'var(--text-soft)', maxWidth: 300, lineHeight: 1.6, marginTop: 6 }}>Connect your Google Calendar using the panel on the left to start.</div>
             </div>
           </div>
-        ) : isEmpty ? (
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 16, paddingBottom: 32 }}>
-            <div style={{ width: 52, height: 52, background: 'white', border: '1px solid var(--border)', borderRadius: 14, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 2px 8px rgba(59,7,100,0.06)' }}>
-              <Ic.Phone />
+
+        /* Idle — show big Start Call button */
+        ) : callState === 'idle' ? (
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 24, paddingBottom: 32 }}>
+            {/* Pulsing phone circle */}
+            <div style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <div style={{ position: 'absolute', width: 100, height: 100, borderRadius: '50%', background: 'rgba(107,63,160,0.08)', animation: 'pip-pulse 2s ease-in-out infinite' }} />
+              <div style={{ width: 72, height: 72, background: 'var(--plum)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 20px rgba(107,63,160,0.35)', zIndex: 1 }}>
+                <Ic.Phone />
+              </div>
             </div>
-            <div>
-              <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-dark)', letterSpacing: '-0.02em', textAlign: 'center' }}>Start a test call</div>
-              <div style={{ fontSize: 12, color: 'var(--text-soft)', textAlign: 'center', lineHeight: 1.6, maxWidth: 300, marginTop: 6 }}>Type as if you're a customer calling in. See how your agent responds.</div>
+            <div style={{ textAlign: 'center' }}>
+              <div style={{ fontSize: 17, fontWeight: 700, color: 'var(--text-dark)', letterSpacing: '-0.02em' }}>Start a conversation</div>
+              <div style={{ fontSize: 12, color: 'var(--text-soft)', maxWidth: 300, lineHeight: 1.65, marginTop: 6 }}>
+                The agent will greet you first — reply as a customer to test how it responds.
+                The full conversation is saved when you end the call.
+              </div>
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, width: '100%', maxWidth: 440 }}>
-              {QUICK_PROMPTS.map(s => (
-                <button key={s} onClick={() => send(s)} style={{
-                  background: 'white', border: '1px solid var(--border)', borderRadius: 8,
-                  padding: '10px 14px', fontSize: 12, fontWeight: 500, color: 'var(--text-mid)',
-                  cursor: 'pointer', textAlign: 'left', fontFamily: 'var(--font-ui)',
-                  transition: 'background 0.12s, border-color 0.12s, color 0.12s',
-                }}
-                  onMouseEnter={e => { const el = e.currentTarget; el.style.background = 'var(--lavender-mid)'; el.style.borderColor = 'var(--plum-xlight)'; el.style.color = 'var(--plum)'; }}
-                  onMouseLeave={e => { const el = e.currentTarget; el.style.background = 'white'; el.style.borderColor = 'var(--border)'; el.style.color = 'var(--text-mid)'; }}
-                >{s}</button>
+            <button onClick={startCall} style={{
+              display: 'flex', alignItems: 'center', gap: 8,
+              background: 'var(--plum)', color: 'white', border: 'none', borderRadius: 10,
+              padding: '12px 32px', fontSize: 14, fontWeight: 700, cursor: 'pointer',
+              fontFamily: 'var(--font-ui)', boxShadow: '0 4px 16px rgba(107,63,160,0.3)',
+              transition: 'transform 0.1s, box-shadow 0.1s',
+            }}
+              onMouseEnter={e => { e.currentTarget.style.transform = 'scale(1.03)'; e.currentTarget.style.boxShadow = '0 6px 20px rgba(107,63,160,0.4)'; }}
+              onMouseLeave={e => { e.currentTarget.style.transform = 'scale(1)'; e.currentTarget.style.boxShadow = '0 4px 16px rgba(107,63,160,0.3)'; }}
+            >
+              <Ic.Phone /> Start Call
+            </button>
+          </div>
+
+        /* Ended — show call summary */
+        ) : callState === 'ended' ? (
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 0 }}>
+            {/* Scrollable transcript replay */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14, flex: 1 }}>
+              {msgs.map((m, i) => (
+                <div key={i} style={{ display: 'flex', gap: 10, alignItems: 'flex-end', flexDirection: m.role === 'user' ? 'row-reverse' : 'row', opacity: 0.7 }}>
+                  <div style={{ width: 26, height: 26, borderRadius: '50%', background: m.role === 'assistant' ? 'var(--plum)' : 'var(--text-soft)', color: 'white', fontSize: 9, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                    {m.role === 'assistant' ? init : 'You'}
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', maxWidth: '72%' }}>
+                    <div style={{ padding: '10px 14px', borderRadius: 14, fontSize: 13, lineHeight: 1.55, ...(m.role === 'assistant' ? { background: 'white', border: '1px solid var(--border)', color: 'var(--text-dark)', borderBottomLeftRadius: 4 } : { background: 'var(--plum)', color: 'white', borderBottomRightRadius: 4 }) }}>
+                      {m.content}
+                    </div>
+                    <div style={{ fontSize: 10, color: 'var(--text-soft)', marginTop: 3, padding: '0 2px', textAlign: m.role === 'user' ? 'right' : 'left' }}>{m.t}</div>
+                  </div>
+                </div>
               ))}
             </div>
+            {/* Call ended banner */}
+            <div style={{ marginTop: 24, padding: '14px 20px', background: 'var(--lavender-bg)', borderRadius: 12, border: '1px solid var(--lavender-dark)', textAlign: 'center' }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-dark)' }}>Call ended</div>
+              <div style={{ fontSize: 12, color: 'var(--text-soft)', marginTop: 3 }}>
+                {formatDuration(elapsed)} · {userTurns} message{userTurns !== 1 ? 's' : ''} · {saveError ? 'Save failed' : 'Conversation saved'}
+              </div>
+              {saveError && (
+                <div style={{ marginTop: 8, fontSize: 11, color: '#DC2626', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 6, padding: '6px 10px', textAlign: 'left', wordBreak: 'break-word' }}>
+                  Error: {saveError}
+                </div>
+              )}
+              <button onClick={resetCall} style={{ marginTop: 10, background: 'var(--plum)', color: 'white', border: 'none', borderRadius: 7, padding: '7px 20px', fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'var(--font-ui)' }}>
+                Start New Call
+              </button>
+            </div>
           </div>
+
+        /* Active — live chat */
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14, width: '100%' }}>
             {msgs.map((m, i) => (
@@ -153,12 +304,7 @@ const RightPanel: React.FC<{ agent: AgentConfig; calendarConnected: boolean | nu
                   {m.role === 'assistant' ? init : 'You'}
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', maxWidth: '72%' }}>
-                  <div style={{
-                    padding: '10px 14px', borderRadius: 14, fontSize: 13, lineHeight: 1.55,
-                    ...(m.role === 'assistant'
-                      ? { background: 'white', border: '1px solid var(--border)', color: 'var(--text-dark)', borderBottomLeftRadius: 4 }
-                      : { background: 'var(--plum)', color: 'white', borderBottomRightRadius: 4 })
-                  }}>
+                  <div style={{ padding: '10px 14px', borderRadius: 14, fontSize: 13, lineHeight: 1.55, ...(m.role === 'assistant' ? { background: 'white', border: '1px solid var(--border)', color: 'var(--text-dark)', borderBottomLeftRadius: 4 } : { background: 'var(--plum)', color: 'white', borderBottomRightRadius: 4 }) }}>
                     {m.content}
                   </div>
                   <div style={{ fontSize: 10, color: 'var(--text-soft)', marginTop: 3, padding: '0 2px', textAlign: m.role === 'user' ? 'right' : 'left' }}>{m.t}</div>
@@ -176,33 +322,36 @@ const RightPanel: React.FC<{ agent: AgentConfig; calendarConnected: boolean | nu
         )}
       </div>
 
-      {/* Input bar */}
-      <div style={{ background: 'white', borderTop: '1px solid var(--border)', padding: '12px 24px', display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, opacity: calendarConnected ? 1 : 0.4, pointerEvents: calendarConnected ? 'auto' : 'none' }}>
-        <div style={{ flex: 1, background: 'var(--lavender-bg)', border: '1px solid var(--lavender-dark)', borderRadius: 8, display: 'flex', alignItems: 'center', padding: '0 12px', transition: 'border-color 0.15s' }}
-          onFocus={e => (e.currentTarget.style.borderColor = 'var(--plum-xlight)')}
-          onBlur={e => (e.currentTarget.style.borderColor = 'var(--lavender-dark)')}
-        >
-          <input
-            ref={inputRef}
-            value={input}
-            onChange={e => setInput(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter') send(); }}
-            placeholder={calendarConnected ? 'Type as a caller…' : 'Connect Google Calendar to start…'}
-            style={{ flex: 1, background: 'none', border: 'none', outline: 'none', fontSize: 13, fontFamily: 'var(--font-ui)', color: 'var(--text-dark)', padding: '10px 0' }}
-          />
+      {/* ── INPUT BAR (active calls only) ── */}
+      {callState === 'active' && (
+        <div style={{ background: 'white', borderTop: '1px solid var(--border)', padding: '12px 24px', display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+          <div style={{ flex: 1, background: 'var(--lavender-bg)', border: '1px solid var(--lavender-dark)', borderRadius: 8, display: 'flex', alignItems: 'center', padding: '0 12px' }}
+            onFocus={e => (e.currentTarget.style.borderColor = 'var(--plum-xlight)')}
+            onBlur={e => (e.currentTarget.style.borderColor = 'var(--lavender-dark)')}
+          >
+            <input
+              ref={inputRef}
+              value={input}
+              onChange={e => setInput(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') send(); }}
+              placeholder="Reply as a customer…"
+              style={{ flex: 1, background: 'none', border: 'none', outline: 'none', fontSize: 13, fontFamily: 'var(--font-ui)', color: 'var(--text-dark)', padding: '10px 0' }}
+            />
+          </div>
+          <button onClick={() => send()} disabled={!input.trim()} style={{
+            background: 'var(--plum)', color: 'white', border: 'none', borderRadius: 8,
+            padding: '9px 16px', fontSize: 13, fontWeight: 600, fontFamily: 'var(--font-ui)',
+            cursor: input.trim() ? 'pointer' : 'not-allowed',
+            display: 'flex', alignItems: 'center', gap: 6,
+            opacity: input.trim() ? 1 : 0.4, transition: 'background 0.15s',
+          }}
+            onMouseEnter={e => { if (input.trim()) e.currentTarget.style.background = 'var(--plum-mid)'; }}
+            onMouseLeave={e => (e.currentTarget.style.background = 'var(--plum)')}
+          >
+            <Ic.Send /> Send
+          </button>
         </div>
-        <button onClick={() => send()} disabled={!input.trim() && msgs.length > 0} style={{
-          background: 'var(--plum)', color: 'white', border: 'none', borderRadius: 8,
-          padding: '9px 16px', fontSize: 13, fontWeight: 600, fontFamily: 'var(--font-ui)',
-          cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6,
-          transition: 'background 0.15s', opacity: (!input.trim() && msgs.length > 0) ? 0.4 : 1,
-        }}
-          onMouseEnter={e => (e.currentTarget.style.background = 'var(--plum-mid)')}
-          onMouseLeave={e => (e.currentTarget.style.background = 'var(--plum)')}
-        >
-          <Ic.Send /> Send
-        </button>
-      </div>
+      )}
     </div>
   );
 };

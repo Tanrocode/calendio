@@ -10,20 +10,37 @@ router = APIRouter()
 
 @router.get("/dashboard/metrics")
 def get_metrics(current_user: CurrentUser = Depends(get_current_user)):
+    now = datetime.now(timezone.utc)
+
+    # Count conversations directly from the source of truth
+    all_convos = (
+        supabase.table("conversations")
+        .select("ended_at")
+        .eq("user_id", current_user.id)
+        .execute()
+    )
+    total_conversations = len(all_convos.data)
+
+    today_str = now.date().isoformat()  # e.g. "2026-05-05"
+    conversations_today = sum(
+        1 for c in all_convos.data
+        if c.get("ended_at", "").startswith(today_str)
+    )
+
+    # Appointments booked — still from metrics table (no better source yet)
     metric_result = (
         supabase.table("metrics")
-        .select("*")
+        .select("total_appointments_created")
         .eq("user_id", current_user.id)
         .execute()
     )
     metric = metric_result.data[0] if metric_result.data else None
 
-    now = datetime.now(timezone.utc).isoformat()
     upcoming_result = (
         supabase.table("appointments")
         .select("*")
         .eq("user_id", current_user.id)
-        .gte("start_time", now)
+        .gte("start_time", now.isoformat())
         .order("start_time")
         .execute()
     )
@@ -40,7 +57,8 @@ def get_metrics(current_user: CurrentUser = Depends(get_current_user)):
 
     return {
         "metrics": {
-            "total_conversations": metric["total_conversations"] if metric else 0,
+            "total_conversations": total_conversations,
+            "conversations_today": conversations_today,
             "total_appointments_created": metric["total_appointments_created"] if metric else 0,
         },
         "upcoming_appointments": upcoming,
@@ -57,7 +75,7 @@ def get_recent_activity(
         supabase.table("conversations")
         .select("*")
         .eq("user_id", current_user.id)
-        .order("timestamp", desc=True)
+        .order("ended_at", desc=True)
         .limit(limit)
         .execute()
     )

@@ -101,10 +101,13 @@ export const updateAgent = async (
 
 export type ConversationRow = {
   id: number;
+  agent_id: number;
   user_id: number;
-  message: string;
-  response: string;
-  timestamp: string;
+  summary: string;
+  intent: string | null;
+  outcome: string | null;
+  started_at: string;
+  ended_at: string;
 };
 
 // Fetch recent chat conversations for the dashboard Recent Activity section
@@ -112,6 +115,16 @@ export const getRecentActivity = async (): Promise<ConversationRow[]> => {
   const headers = await getAuthHeaders();
   const res = await axios.get('/dashboard/recent-activity', { headers });
   return res.data.conversations ?? [];
+};
+
+// Save a complete call session transcript when the user ends the conversation
+export const saveConversation = async (
+  agentId: number,
+  messages: { role: string; content: string }[],
+  elapsedSeconds: number = 0,
+): Promise<void> => {
+  const headers = await getAuthHeaders();
+  await axios.post(`/agents/${agentId}/conversations`, { messages, elapsed_seconds: elapsedSeconds }, { headers });
 };
 
 export const getCalendarStatus = async (): Promise<{ connected: boolean }> => {

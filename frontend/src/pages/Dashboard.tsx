@@ -7,7 +7,7 @@ import BusinessHoursEditor from '../components/BusinessHoursEditor';
 import { persistAppUserFromSession, supabase } from '../lib/supabaseClient';
 import { getUpcomingEvents, type CalendarEventRow } from '../lib/calendarDemoApi';
 
-type Metrics = { total_conversations: number; total_appointments_created: number };
+type Metrics = { total_conversations: number; conversations_today: number; total_appointments_created: number };
 const EMPTY_FORM = { name: '', services: '', business_hours: '', agent_instructions: '' };
 
 // Shape returned by the dashboard/metrics upcoming_appointments field
@@ -315,7 +315,7 @@ const TodaySchedule: React.FC<{ today: string; supabaseAppts?: SupabaseAppt[] }>
 /* ── DASHBOARD ── */
 const Dashboard: React.FC = () => {
   const navigate = useNavigate();
-  const [metrics, setMetrics] = useState<Metrics>({ total_conversations: 0, total_appointments_created: 0 });
+  const [metrics, setMetrics] = useState<Metrics>({ total_conversations: 0, conversations_today: 0, total_appointments_created: 0 });
   const [agents, setAgents] = useState<AgentConfig[]>([]);
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState(EMPTY_FORM);
@@ -413,7 +413,7 @@ const Dashboard: React.FC = () => {
 
           {/* Stat strip */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 12 }}>
-            <StatTile label="Conversations" value={String(metrics.total_conversations)} delta="+0 today" up={false} />
+            <StatTile label="Conversations" value={String(metrics.total_conversations)} delta={`+${metrics.conversations_today} today`} up={metrics.conversations_today > 0} />
             <StatTile label="Appointments Booked" value={String(metrics.total_appointments_created)} delta="+0 today" up={false} accent="accent" />
             <StatTile label="Booking Rate" value={rate} accent="green" />
             <StatTile label="Active Agents" value={`${activeCount} / ${agents.length}`} delta={agents.length - activeCount > 0 ? `${agents.length - activeCount} inactive` : undefined} />
@@ -514,8 +514,8 @@ const Dashboard: React.FC = () => {
               ) : (
                 <div style={{ maxHeight: 320, overflowY: 'auto' }}>
                   {recentActivity.map((conv, i) => {
-                    const ts = conv.timestamp
-                      ? new Date(conv.timestamp).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+                    const ts = conv.ended_at
+                      ? new Date(conv.ended_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
                       : '';
                     return (
                       <div key={conv.id ?? i} style={{
@@ -523,21 +523,12 @@ const Dashboard: React.FC = () => {
                         borderBottom: i < recentActivity.length - 1 ? '1px solid var(--lavender-bg)' : 'none',
                         display: 'flex', flexDirection: 'column', gap: 4,
                       }}>
-                        {/* Customer message */}
                         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
                           <div style={{ flexShrink: 0, width: 20, height: 20, borderRadius: '50%', background: 'var(--text-soft)', color: 'white', fontSize: 8, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>U</div>
                           <div style={{ fontSize: 12, color: 'var(--text-dark)', flex: 1, lineHeight: 1.4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                            {conv.message}
+                            {conv.summary}
                           </div>
                         </div>
-                        {/* Agent reply */}
-                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
-                          <div style={{ flexShrink: 0, width: 20, height: 20, borderRadius: '50%', background: 'var(--plum)', color: 'white', fontSize: 8, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>A</div>
-                          <div style={{ fontSize: 12, color: 'var(--text-soft)', flex: 1, lineHeight: 1.4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                            {conv.response}
-                          </div>
-                        </div>
-                        {/* Timestamp */}
                         {ts && (
                           <div style={{ fontSize: 10, color: 'var(--text-soft)', marginLeft: 28, display: 'flex', alignItems: 'center', gap: 4 }}>
                             <Ic.Clock />{ts}
