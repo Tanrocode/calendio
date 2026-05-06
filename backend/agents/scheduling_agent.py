@@ -168,18 +168,29 @@ class SchedulingAgent:
     def _build_agent(self):
         # Keep backend booting even if optional LLM deps are missing in local/dev envs.
         if not settings.OPENAI_API_KEY:
+            logger.warning("OPENAI_API_KEY is not set — agent will return stub response.")
             return None
         try:
-            from langchain.agents import create_agent
+            from langchain.agents import AgentExecutor, create_tool_calling_agent
+            from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
             from langchain_openai import ChatOpenAI
-        except Exception:
+        except ImportError as exc:
+            logger.error("LangChain packages missing: %s — run `pip install langchain langchain-openai`", exc)
             return None
 
-        return create_agent(
-            model=ChatOpenAI(model="gpt-4o-mini", api_key=settings.OPENAI_API_KEY),
-            tools=self.tools,
-            system_prompt=self.build_system_prompt(),
-        )
+        llm = ChatOpenAI(model="gpt-4o-mini", api_key=settings.OPENAI_API_KEY)
+
+        # Prompt template: system context, optional conversation history, current user turn,
+        # then the scratchpad where the agent records its reasoning and tool calls.
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", self.build_system_prompt()),
+            MessagesPlaceholder("chat_history", optional=True),
+            ("human", "{input}"),
+            MessagesPlaceholder("agent_scratchpad"),
+        ])
+
+        agent = create_tool_calling_agent(llm, self.tools, prompt)
+        return AgentExecutor(agent=agent, tools=self.tools, verbose=True, max_iterations=6)
 
     def build_system_prompt(self) -> str:
         now = datetime.now(ZoneInfo("America/Los_Angeles"))
@@ -237,20 +248,21 @@ class SchedulingAgent:
                         "Install `langchain-openai` and set `OPENAI_API_KEY`."
                     )
                 }
-            messages = [
-                {"role": m["role"], "content": m["content"]}
-                for m in (history or [])
-            ] + [{"role": "user", "content": message}]
 
-            result = self.agent.invoke({"messages": messages})
-            for msg in result.get("messages", []) or []:
-                # LangChain message objects may carry tool calls in either attribute.
-                tcs = getattr(msg, "tool_calls", None)
-                if not tcs:
-                    tcs = getattr(msg, "additional_kwargs", {}).get("tool_calls", [])
-                if tcs:
-                    logger.info("tool_calls=%s", tcs)
-            reply = result["messages"][-1].content
+            # Convert conversation history to LangChain message objects
+            from langchain_core.messages import AIMessage, HumanMessage
+            chat_history = []
+            for m in (history or []):
+                if m["role"] == "user":
+                    chat_history.append(HumanMessage(content=m["content"]))
+                else:
+                    chat_history.append(AIMessage(content=m["content"]))
+
+            result = self.agent.invoke({
+                "input": message,
+                "chat_history": chat_history,
+            })
+            reply = result["output"]
             return {"reply": reply}
         except Exception:
             logger.exception("agent.invoke failed")
