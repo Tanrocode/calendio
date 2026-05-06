@@ -3,9 +3,10 @@ import logging
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile
 from pydantic import BaseModel
 
+from ..config import settings
 from ..supabase_auth import CurrentUser, get_current_user
 from ..supabase_client import supabase
 
@@ -253,6 +254,148 @@ def upload_context_pdf(
         .execute()
     )
     return {"extracted_chars": len(extracted), "pages": page_count, "context": extracted}
+
+
+# ── VOICE: SPEECH-TO-TEXT ────────────────────────────────────────────────────
+
+@router.post("/{agent_id}/transcribe")
+def transcribe_audio(
+    agent_id: int,
+    file: UploadFile = File(...),
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    """
+    Receive a voice recording from the browser (webm/opus from MediaRecorder),
+    send it to OpenAI Whisper (gpt-4o-transcribe), and return the transcribed text.
+    The frontend then sends that text through the normal chat endpoint.
+    """
+    import io
+    from openai import OpenAI as _OpenAI
+
+    # Reject requests for agents that don't belong to this user
+    existing = (
+        supabase.table("agent_configs")
+        .select("id")
+        .eq("id", agent_id)
+        .eq("user_id", current_user.id)
+        .execute()
+    )
+    if not existing.data:
+        raise HTTPException(status_code=404, detail="Agent not found.")
+
+    if not settings.OPENAI_API_KEY:
+        raise HTTPException(status_code=500, detail="OPENAI_API_KEY is not configured.")
+
+    raw = file.file.read()
+    # Use the original filename so OpenAI knows the codec; fall back to .webm
+    filename = file.filename or "recording.webm"
+    content_type = file.content_type or "audio/webm"
+
+    client = _OpenAI(api_key=settings.OPENAI_API_KEY)
+    transcription = client.audio.transcriptions.create(
+        model="gpt-4o-transcribe",
+        file=(filename, io.BytesIO(raw), content_type),
+    )
+    return {"text": transcription.text}
+
+
+# ── VOICE: TEXT-TO-SPEECH ────────────────────────────────────────────────────
+
+class SpeakBody(BaseModel):
+    text: str
+    voice: str = "coral"   # default: warm, natural-sounding voice
+
+
+@router.post("/{agent_id}/speak")
+def speak_text(
+    agent_id: int,
+    body: SpeakBody,
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    """
+    Convert the agent's text reply to speech using OpenAI TTS (gpt-4o-mini-tts)
+    and stream back raw MP3 bytes.  The frontend creates a blob URL and plays it
+    with an <audio> element, giving the agent its voice.
+    """
+    from openai import OpenAI as _OpenAI
+
+    existing = (
+        supabase.table("agent_configs")
+        .select("id")
+        .eq("id", agent_id)
+        .eq("user_id", current_user.id)
+        .execute()
+    )
+    if not existing.data:
+        raise HTTPException(status_code=404, detail="Agent not found.")
+
+    if not settings.OPENAI_API_KEY:
+        raise HTTPException(status_code=500, detail="OPENAI_API_KEY is not configured.")
+
+    client = _OpenAI(api_key=settings.OPENAI_API_KEY)
+    # gpt-4o-mini-tts is the fastest high-quality TTS model; mp3 works in all browsers
+    tts_response = client.audio.speech.create(
+        model="gpt-4o-mini-tts",
+        voice=body.voice,
+        input=body.text,
+        response_format="mp3",
+    )
+    return Response(content=tts_response.content, media_type="audio/mpeg")
+
+
+@router.get("/{agent_id}/realtime-token")
+def get_realtime_token(
+    agent_id: int,
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    """
+    Create a short-lived OpenAI Realtime API ephemeral token so the browser
+    can open a transcription WebSocket directly — no API key ever reaches
+    the client.  The session is configured with semantic VAD so the API
+    automatically detects when the caller has finished speaking.
+    """
+    import httpx
+
+    existing = (
+        supabase.table("agent_configs")
+        .select("id")
+        .eq("id", agent_id)
+        .eq("user_id", current_user.id)
+        .execute()
+    )
+    if not existing.data:
+        raise HTTPException(status_code=404, detail="Agent not found.")
+
+    if not settings.OPENAI_API_KEY:
+        raise HTTPException(status_code=500, detail="OPENAI_API_KEY not configured.")
+
+    # /realtime/transcription_sessions is the correct endpoint for transcription-only
+    # sessions.  /realtime/sessions is for full conversation sessions (different token type).
+    resp = httpx.post(
+        "https://api.openai.com/v1/realtime/transcription_sessions",
+        headers={
+            "Authorization": f"Bearer {settings.OPENAI_API_KEY}",
+            "Content-Type": "application/json",
+        },
+        json={
+            "input_audio_format": "pcm16",
+            "input_audio_transcription": {"model": "gpt-4o-transcribe"},
+            "turn_detection": {
+                "type": "server_vad",
+                "threshold": 0.5,
+                "prefix_padding_ms": 300,
+                "silence_duration_ms": 700,
+            },
+        },
+        timeout=10,
+    )
+    logger.info("OpenAI transcription_sessions response %s: %s", resp.status_code, resp.text[:300])
+    if resp.status_code != 200:
+        raise HTTPException(
+            status_code=502,
+            detail=f"OpenAI session creation failed: {resp.text}",
+        )
+    return resp.json()
 
 
 @router.delete("/{agent_id}")

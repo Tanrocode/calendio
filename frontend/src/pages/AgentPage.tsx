@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { getAgent, deleteAgent, updateAgent, uploadAgentContextPdf, chatWithAgent, saveConversation, getCalendarStatus, getCalendarAuthUrl } from '../services/api';
+import { getAgent, deleteAgent, updateAgent, uploadAgentContextPdf, chatWithAgent, saveConversation, speakText, getRealtimeToken, getCalendarStatus, getCalendarAuthUrl } from '../services/api';
 import type { AgentConfig } from '../services/api';
 import BusinessHoursEditor, { parseWeekHours, fmtTime } from '../components/BusinessHoursEditor';
 import Sidebar from '../components/Sidebar';
@@ -60,27 +60,90 @@ function formatDuration(secs: number): string {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
-/* ── RIGHT PANEL / CALL FLOW ── */
+/* ── RIGHT PANEL / CONTINUOUS VOICE AGENT ───────────────────────────────────
+ *
+ * Voice pipeline (fully automatic — no button presses needed):
+ *   1. Call starts → agent greets → TTS plays greeting aloud
+ *   2. WebSocket opens to OpenAI Realtime API in transcription mode
+ *   3. Mic audio streams continuously as PCM16 @ 24 kHz
+ *   4. Semantic VAD fires speech_started / speech_stopped events automatically
+ *   5. On transcript complete → POST /agents/{id}/chat → LangChain reply
+ *   6. Reply → POST /agents/{id}/speak → TTS mp3 → plays in browser
+ *   7. Mic is muted (muteRef) during TTS to suppress echo feedback
+ *   8. On call end → WebSocket closed, mic released, full transcript saved
+ *
+ * Text input is always available as a fallback (mic denied, or user prefers
+ * typing during the call).
+ * ── */
+
+// Possible states of the voice pipeline while a call is active.
+type VoiceState = 'connecting' | 'listening' | 'user_speaking' | 'thinking' | 'agent_speaking';
+
+// Convert an ArrayBuffer to a base64 string for the Realtime API audio payload.
+// Processes in 32KB chunks to avoid call-stack overflow on large buffers.
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+  }
+  return btoa(binary);
+}
+
 const RightPanel: React.FC<{ agent: AgentConfig; calendarConnected: boolean | null }> = ({ agent, calendarConnected }) => {
+  // ── call state ─────────────────────────────────────────────────────────────
   const [callState, setCallState] = useState<CallState>('idle');
-  const [msgs, setMsgs] = useState<Message[]>([]);
-  const [input, setInput] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [elapsed, setElapsed] = useState(0);
+  const [msgs, setMsgs]           = useState<Message[]>([]);
+  const [input, setInput]         = useState('');
+  const [loading, setLoading]     = useState(false); // agent is generating a reply
+  const [elapsed, setElapsed]     = useState(0);     // call duration in seconds
   const [saveError, setSaveError] = useState<string | null>(null);
-  const bottomRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+
+  // ── voice state ────────────────────────────────────────────────────────────
+  // null when the call is idle or ended; one of VoiceState while active.
+  const [voiceState, setVoiceState] = useState<VoiceState | null>(null);
+  const [micError, setMicError]     = useState<string | null>(null);
+
+  // ── refs ───────────────────────────────────────────────────────────────────
+  const bottomRef       = useRef<HTMLDivElement>(null);
+  const inputRef        = useRef<HTMLInputElement>(null);
+  const wsRef           = useRef<WebSocket | null>(null);           // Realtime API socket
+  const audioCtxRef     = useRef<AudioContext | null>(null);        // 24 kHz AudioContext
+  const streamRef       = useRef<MediaStream | null>(null);         // mic media stream
+  const processorRef    = useRef<ScriptProcessorNode | null>(null); // PCM capture node
+  const audioPlayerRef  = useRef<HTMLAudioElement | null>(null);    // TTS playback element
+  const muteRef         = useRef(false); // true while TTS plays — suppresses mic echo
+
+  // Refs that give the WebSocket onmessage handler access to the latest React
+  // state without stale-closure issues (onmessage is only assigned once).
+  const msgsRef               = useRef<Message[]>([]);
+  const loadingRef            = useRef(false);
+  const callStateRef          = useRef<CallState>('idle');
+  // Pointer to the latest handleTranscript — updated every render so the
+  // WebSocket closure always calls the current version.
+  const transcriptHandlerRef  = useRef<(t: string) => void>(() => {});
 
   const init = agent.name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
 
-  // Live call timer — increments every second while the call is active
+  // Keep refs in sync every render so WebSocket callbacks are never stale.
+  msgsRef.current      = msgs;
+  loadingRef.current   = loading;
+  callStateRef.current = callState;
+
+  // ── derived ─────────────────────────────────────────────────────────────────
+  const userTurns = msgs.filter(m => m.role === 'user').length;
+  // Lock text input while the agent is generating or speaking.
+  const isBusy = loading || voiceState === 'thinking' || voiceState === 'agent_speaking';
+
+  // ── call timer ──────────────────────────────────────────────────────────────
   useEffect(() => {
     if (callState !== 'active') return;
     const id = setInterval(() => setElapsed(s => s + 1), 1000);
     return () => clearInterval(id);
   }, [callState]);
 
-  // Keep chat scrolled to the bottom as new messages arrive
+  // ── auto-scroll ─────────────────────────────────────────────────────────────
   useEffect(() => {
     if (bottomRef.current) {
       const el = bottomRef.current.parentElement!;
@@ -88,31 +151,250 @@ const RightPanel: React.FC<{ agent: AgentConfig; calendarConnected: boolean | nu
     }
   }, [msgs, loading]);
 
-  // Kick off the call: agent speaks first with an opening greeting
+  // ── cleanup: close WebSocket and mic when the component unmounts ───────────
+  useEffect(() => { return () => { disconnectRealtime(); }; }, []);
+
+  // ── TTS: convert agent reply text to speech and play it ───────────────────
+  const speakReply = async (text: string) => {
+    setVoiceState('agent_speaking');
+    muteRef.current = true; // suppress mic so TTS audio isn't looped back into VAD
+    try {
+      const audioBlob = await speakText(agent.id, text);
+      const url = URL.createObjectURL(audioBlob);
+      const audio = new Audio(url);
+      audioPlayerRef.current = audio;
+      await new Promise<void>(resolve => {
+        audio.onended = () => resolve();
+        audio.onerror = () => resolve(); // non-fatal; text reply is still visible
+        audio.play();
+      });
+      URL.revokeObjectURL(url);
+    } catch { /* TTS failure is non-fatal */ }
+    finally {
+      muteRef.current = false;
+      audioPlayerRef.current = null;
+      // Return to listening only if the WebSocket is still connected.
+      if (wsRef.current?.readyState === WebSocket.OPEN) setVoiceState('listening');
+    }
+  };
+
+  // ── chat: send a user turn to the LangChain agent, return reply text ──────
+  // Reads state through refs so it's safe to call from WebSocket callbacks
+  // without stale-closure issues across multiple conversation turns.
+  const send = async (text?: string): Promise<string | null> => {
+    const msg = (text ?? input).trim();
+    if (!msg || loadingRef.current || callStateRef.current !== 'active') return null;
+
+    const t = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    // Use the ref to get the freshest msgs (avoids stale closure on turn 2+)
+    const newMsgs: Message[] = [...msgsRef.current, { role: 'user', content: msg, t }];
+    setMsgs(newMsgs);
+    setInput('');
+    loadingRef.current = true;
+    setLoading(true);
+
+    let reply = "Sorry, I'm having a little trouble. Could you try again?";
+    try {
+      const history = newMsgs.slice(0, -1).map(m => ({ role: m.role, content: m.content }));
+      const data = await chatWithAgent(agent.id, msg, history);
+      reply = data.reply;
+    } catch { /* use fallback */ }
+
+    setMsgs(prev => [...prev, {
+      role: 'assistant', content: reply,
+      t: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+    }]);
+    loadingRef.current = false;
+    setLoading(false);
+    inputRef.current?.focus();
+    return reply;
+  };
+
+  // ── VAD callback: process completed transcript from the Realtime API ──────
+  // This function is stored in a ref so the WebSocket onmessage always calls
+  // the latest version, even after multiple re-renders.
+  const handleTranscript = async (transcript: string) => {
+    if (!transcript.trim() || callStateRef.current !== 'active') return;
+    if (loadingRef.current) return; // agent already processing a turn — discard
+    const reply = await send(transcript);
+    if (reply) await speakReply(reply);
+  };
+  // Update the ref every render so onmessage always has the latest handler.
+  transcriptHandlerRef.current = handleTranscript;
+
+  // ── start streaming PCM16 mic audio into the open WebSocket ───────────────
+  const startMicStream = async (ws: WebSocket) => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true },
+      });
+
+      // Use the AudioContext pre-created in startCall (inside the click handler).
+      // If we created it here instead, Chrome would suspend it immediately because
+      // ws.onopen is not a user-gesture context — onaudioprocess would never fire.
+      const audioCtx = audioCtxRef.current!;
+
+      // Resume in case the context was suspended between creation and first use.
+      if (audioCtx.state !== 'running') {
+        try { await audioCtx.resume(); } catch { /* best effort */ }
+      }
+
+      const source    = audioCtx.createMediaStreamSource(stream);
+      const processor = audioCtx.createScriptProcessor(4096, 1, 1);
+
+      let chunkCount = 0;
+      processor.onaudioprocess = (e) => {
+        if (ws.readyState !== WebSocket.OPEN || muteRef.current) return;
+        chunkCount++;
+        // Log every 30 chunks (~5 s) so you can confirm audio is flowing in DevTools.
+        if (chunkCount % 30 === 0) console.log(`[VAD] audio flowing — ${chunkCount} chunks sent`);
+        const samples = e.inputBuffer.getChannelData(0);
+        // Convert Float32 [-1, 1] → Int16 [-32768, 32767] for the Realtime API
+        const pcm = new Int16Array(samples.length);
+        for (let i = 0; i < samples.length; i++) {
+          pcm[i] = Math.max(-32768, Math.min(32767, Math.round(samples[i] * 32768)));
+        }
+        ws.send(JSON.stringify({
+          type: 'input_audio_buffer.append',
+          audio: arrayBufferToBase64(pcm.buffer),
+        }));
+      };
+
+      // A downstream node is required for onaudioprocess to fire, but we must
+      // NOT connect to audioCtx.destination — that would play the raw mic audio
+      // back through the speakers, causing echo and confusing the VAD.
+      // A zero-gain node silences the output while satisfying the Web Audio graph.
+      const silentGain = audioCtx.createGain();
+      silentGain.gain.value = 0;
+      source.connect(processor);
+      processor.connect(silentGain);
+      silentGain.connect(audioCtx.destination);
+
+      streamRef.current    = stream;
+      processorRef.current = processor;
+    } catch {
+      setMicError('Microphone access denied — you can still type your message.');
+    }
+  };
+
+  // ── connect to OpenAI Realtime API for transcription + semantic VAD ────────
+  const connectRealtime = async () => {
+    setVoiceState('connecting');
+    setMicError(null);
+    try {
+      // Backend creates an ephemeral token so the API key is never sent to the browser.
+      const tokenData = await getRealtimeToken(agent.id);
+      const token = tokenData.client_secret.value;
+
+      // Subprotocols carry the ephemeral token and API version for browser auth.
+      const ws = new WebSocket(
+        'wss://api.openai.com/v1/realtime?intent=transcription',
+        ['realtime', `openai-insecure-api-key.${token}`, 'openai-beta.realtime-v1'],
+      );
+
+      ws.onopen = () => {
+        console.log('[VAD] WebSocket connected — sending session.update');
+        ws.send(JSON.stringify({
+          type: 'session.update',
+          session: {
+            input_audio_format: 'pcm16',
+            input_audio_transcription: { model: 'gpt-4o-transcribe' },
+            turn_detection: {
+              type: 'server_vad',
+              threshold: 0.5,
+              prefix_padding_ms: 300,
+              silence_duration_ms: 700,
+            },
+          },
+        }));
+        startMicStream(ws);
+        setVoiceState('listening');
+      };
+
+      ws.onmessage = (event) => {
+        const msg = JSON.parse(event.data as string);
+        // Log every event so you can see the full pipeline in DevTools console.
+        // speech_started / speech_stopped confirm VAD is receiving audio.
+        // transcript.completed is the final trigger for the agent reply.
+        console.log('[VAD] event:', msg.type, msg.type === 'conversation.item.input_audio_transcription.completed' ? `"${msg.transcript}"` : '');
+        switch (msg.type) {
+          case 'input_audio_buffer.speech_started':
+            if (!muteRef.current) setVoiceState('user_speaking');
+            break;
+          case 'input_audio_buffer.speech_stopped':
+            if (!muteRef.current) setVoiceState('thinking');
+            break;
+          case 'conversation.item.input_audio_transcription.completed':
+            transcriptHandlerRef.current(msg.transcript ?? '');
+            break;
+          default:
+            break;
+        }
+      };
+
+      ws.onerror = (e) => {
+        console.error('[VAD] WebSocket error', e);
+        setMicError('Voice connection error — you can still type.');
+      };
+      ws.onclose = (e) => {
+        console.warn('[VAD] WebSocket closed — code:', e.code, 'reason:', e.reason || '(none)');
+        if (wsRef.current === ws) wsRef.current = null;
+      };
+
+      wsRef.current = ws;
+    } catch {
+      setMicError('Could not start voice — you can still type.');
+      setVoiceState(null);
+    }
+  };
+
+  // ── tear down WebSocket and release all audio resources ───────────────────
+  const disconnectRealtime = () => {
+    processorRef.current?.disconnect();
+    processorRef.current = null;
+    audioCtxRef.current?.close();
+    audioCtxRef.current = null;
+    streamRef.current?.getTracks().forEach(t => t.stop());
+    streamRef.current = null;
+    wsRef.current?.close();
+    wsRef.current = null;
+    if (audioPlayerRef.current) { audioPlayerRef.current.pause(); audioPlayerRef.current = null; }
+    muteRef.current = false;
+  };
+
+  // ── START CALL: agent greets first, then open Realtime mic ────────────────
   const startCall = async () => {
+    // AudioContext MUST be created synchronously here — before any await — while
+    // the browser is still inside the click-event user-gesture frame.
+    // If created later (e.g. inside ws.onopen), Chrome suspends the context
+    // immediately and onaudioprocess never fires, so no audio reaches the VAD.
+    audioCtxRef.current = new AudioContext({ sampleRate: 24000 });
+
     setElapsed(0);
     setCallState('active');
     setLoading(true);
     const t = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    let greeting = `Hello! Thank you for calling ${agent.name}. How can I help you today?`;
     try {
-      // Sending "Hello" triggers the agent to produce a natural greeting based on
-      // its configured business name, services, and hours
       const data = await chatWithAgent(agent.id, 'Hello', []);
-      setMsgs([{ role: 'assistant', content: data.reply, t }]);
-    } catch {
-      // Fallback greeting if the LLM is unavailable
-      setMsgs([{ role: 'assistant', content: `Hello! Thank you for calling ${agent.name}. How can I help you today?`, t }]);
-    }
+      greeting = data.reply;
+    } catch { /* use fallback */ }
+
+    setMsgs([{ role: 'assistant', content: greeting, t }]);
     setLoading(false);
-    inputRef.current?.focus();
+    await speakReply(greeting);   // agent speaks first
+    await connectRealtime();      // then open mic and start listening
   };
 
-  // End the call: save the full transcript as one conversation record
+  // ── END CALL: stop audio, disconnect mic, save full transcript ─────────────
   const endCall = async () => {
-    // Capture msgs before any state changes
-    const snapshot = msgs;
+    if (audioPlayerRef.current) { audioPlayerRef.current.pause(); audioPlayerRef.current = null; }
+    disconnectRealtime();
+    const snapshot = msgs; // capture before state clears
     setCallState('ended');
+    setVoiceState(null);
     setSaveError(null);
+
     if (snapshot.length > 0) {
       try {
         await saveConversation(
@@ -122,48 +404,27 @@ const RightPanel: React.FC<{ agent: AgentConfig; calendarConnected: boolean | nu
         );
       } catch (err: unknown) {
         console.error('Failed to save conversation:', err);
-        const msg = err instanceof Error ? err.message : String(err);
-        setSaveError(msg);
+        setSaveError(err instanceof Error ? err.message : String(err));
       }
     }
   };
 
-  // Reset back to idle so the user can start a fresh call
+  // ── RESET: back to idle ────────────────────────────────────────────────────
   const resetCall = () => {
-    setMsgs([]);
-    setElapsed(0);
-    setCallState('idle');
+    setMsgs([]); setElapsed(0); setCallState('idle');
+    setSaveError(null); setMicError(null); setVoiceState(null);
   };
 
-  // Send a user message and get the agent's reply
-  const send = async (text?: string) => {
-    const msg = (text ?? input).trim();
-    if (!msg || loading || callState !== 'active') return;
-    const t = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    const newMsgs: Message[] = [...msgs, { role: 'user', content: msg, t }];
-    setMsgs(newMsgs);
-    setInput('');
-    setLoading(true);
-    try {
-      const history = newMsgs.slice(0, -1).map(m => ({ role: m.role, content: m.content }));
-      const data = await chatWithAgent(agent.id, msg, history);
-      setMsgs(prev => [...prev, {
-        role: 'assistant',
-        content: data.reply,
-        t: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      }]);
-    } catch {
-      setMsgs(prev => [...prev, {
-        role: 'assistant',
-        content: "Sorry, I'm having a little trouble. Could you try again?",
-        t: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      }]);
-    }
-    setLoading(false);
-    inputRef.current?.focus();
-  };
-
-  const userTurns = msgs.filter(m => m.role === 'user').length;
+  // ── status line for the top bar subtitle ──────────────────────────────────
+  const statusLine = (() => {
+    if (callState === 'idle')  return 'Ready — press Start Call to begin';
+    if (callState === 'ended') return `Ended · ${formatDuration(elapsed)} · ${userTurns} msg${userTurns !== 1 ? 's' : ''} · ${saveError ? 'Save failed' : 'Saved'}`;
+    if (voiceState === 'connecting')     return '◌ Connecting…';
+    if (voiceState === 'user_speaking')  return '🔴 Hearing you…';
+    if (voiceState === 'thinking')       return '✦ Thinking…';
+    if (voiceState === 'agent_speaking') return '🔊 Agent speaking…';
+    return null; // active + listening → show pulsing live timer
+  })();
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', background: 'var(--page-bg)' }}>
@@ -174,22 +435,18 @@ const RightPanel: React.FC<{ agent: AgentConfig; calendarConnected: boolean | nu
         <div>
           <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-dark)' }}>{agent.name}</div>
           <div style={{ fontSize: 11, color: 'var(--text-soft)', marginTop: 1 }}>
-            {callState === 'idle' && 'Ready — press Start Call to begin'}
-            {callState === 'active' && (
+            {statusLine ?? (
               <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-                {/* Red pulsing dot while call is live */}
-                <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--red)', display: 'inline-block', animation: 'pip-pulse 1.2s ease-in-out infinite' }} />
-                Live · {formatDuration(elapsed)}
+                {/* Pulsing green dot while mic is open and listening */}
+                <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#10B981', display: 'inline-block', animation: 'pip-pulse 1.2s ease-in-out infinite' }} />
+                Listening · {formatDuration(elapsed)}
               </span>
             )}
-            {callState === 'ended' && `Ended · ${formatDuration(elapsed)} · ${userTurns} message${userTurns !== 1 ? 's' : ''} · ${saveError ? 'Save failed' : 'Saved'}`}
           </div>
         </div>
-
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
           {callState === 'idle' && <StatusPill active={true} />}
           {callState === 'active' && (
-            /* Red "End Call" button — clearly signals ending the session */
             <button onClick={endCall} style={{
               display: 'flex', alignItems: 'center', gap: 6,
               background: '#DC2626', color: 'white', border: 'none', borderRadius: 8,
@@ -204,17 +461,15 @@ const RightPanel: React.FC<{ agent: AgentConfig; calendarConnected: boolean | nu
               background: 'var(--plum-bg)', color: 'var(--plum-mid)', border: '1px solid var(--lavender-dark)',
               borderRadius: 8, padding: '6px 14px', fontSize: 12, fontWeight: 600,
               cursor: 'pointer', fontFamily: 'var(--font-ui)',
-            }}>
-              New Call
-            </button>
+            }}>New Call</button>
           )}
         </div>
       </div>
 
-      {/* ── BODY ── */}
+      {/* ── CHAT BODY ── */}
       <div style={{ flex: 1, overflowY: 'auto', padding: '24px 32px', display: 'flex', flexDirection: 'column' }}>
 
-        {/* Calendar not connected */}
+        {/* Google Calendar not yet connected */}
         {!calendarConnected ? (
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 16, paddingBottom: 32 }}>
             <div style={{ width: 52, height: 52, background: 'white', border: '1px solid var(--border)', borderRadius: 14, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 2px 8px rgba(59,7,100,0.06)' }}>
@@ -228,10 +483,9 @@ const RightPanel: React.FC<{ agent: AgentConfig; calendarConnected: boolean | nu
             </div>
           </div>
 
-        /* Idle — show big Start Call button */
+        /* Idle — start call prompt */
         ) : callState === 'idle' ? (
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 24, paddingBottom: 32 }}>
-            {/* Pulsing phone circle */}
             <div style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <div style={{ position: 'absolute', width: 100, height: 100, borderRadius: '50%', background: 'rgba(107,63,160,0.08)', animation: 'pip-pulse 2s ease-in-out infinite' }} />
               <div style={{ width: 72, height: 72, background: 'var(--plum)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 20px rgba(107,63,160,0.35)', zIndex: 1 }}>
@@ -239,10 +493,9 @@ const RightPanel: React.FC<{ agent: AgentConfig; calendarConnected: boolean | nu
               </div>
             </div>
             <div style={{ textAlign: 'center' }}>
-              <div style={{ fontSize: 17, fontWeight: 700, color: 'var(--text-dark)', letterSpacing: '-0.02em' }}>Start a conversation</div>
-              <div style={{ fontSize: 12, color: 'var(--text-soft)', maxWidth: 300, lineHeight: 1.65, marginTop: 6 }}>
-                The agent will greet you first — reply as a customer to test how it responds.
-                The full conversation is saved when you end the call.
+              <div style={{ fontSize: 17, fontWeight: 700, color: 'var(--text-dark)', letterSpacing: '-0.02em' }}>Start a voice conversation</div>
+              <div style={{ fontSize: 12, color: 'var(--text-soft)', maxWidth: 320, lineHeight: 1.65, marginTop: 6 }}>
+                The agent greets you first, then listens automatically. No button presses needed — just speak naturally.
               </div>
             </div>
             <button onClick={startCall} style={{
@@ -259,10 +512,9 @@ const RightPanel: React.FC<{ agent: AgentConfig; calendarConnected: boolean | nu
             </button>
           </div>
 
-        /* Ended — show call summary */
+        /* Ended — dimmed transcript + summary banner */
         ) : callState === 'ended' ? (
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 0 }}>
-            {/* Scrollable transcript replay */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 14, flex: 1 }}>
               {msgs.map((m, i) => (
                 <div key={i} style={{ display: 'flex', gap: 10, alignItems: 'flex-end', flexDirection: m.role === 'user' ? 'row-reverse' : 'row', opacity: 0.7 }}>
@@ -278,7 +530,6 @@ const RightPanel: React.FC<{ agent: AgentConfig; calendarConnected: boolean | nu
                 </div>
               ))}
             </div>
-            {/* Call ended banner */}
             <div style={{ marginTop: 24, padding: '14px 20px', background: 'var(--lavender-bg)', borderRadius: 12, border: '1px solid var(--lavender-dark)', textAlign: 'center' }}>
               <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-dark)' }}>Call ended</div>
               <div style={{ fontSize: 12, color: 'var(--text-soft)', marginTop: 3 }}>
@@ -295,7 +546,7 @@ const RightPanel: React.FC<{ agent: AgentConfig; calendarConnected: boolean | nu
             </div>
           </div>
 
-        /* Active — live chat */
+        /* Active — live chat bubbles */
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14, width: '100%' }}>
             {msgs.map((m, i) => (
@@ -322,34 +573,68 @@ const RightPanel: React.FC<{ agent: AgentConfig; calendarConnected: boolean | nu
         )}
       </div>
 
-      {/* ── INPUT BAR (active calls only) ── */}
+      {/* ── INPUT BAR ─────────────────────────────────────────────────────────
+       *  Voice is fully automatic (VAD handles turns).
+       *  Text input is available as a fallback — useful when mic is denied
+       *  or the user wants to type during the call.
+       * ── */}
       {callState === 'active' && (
-        <div style={{ background: 'white', borderTop: '1px solid var(--border)', padding: '12px 24px', display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
-          <div style={{ flex: 1, background: 'var(--lavender-bg)', border: '1px solid var(--lavender-dark)', borderRadius: 8, display: 'flex', alignItems: 'center', padding: '0 12px' }}
-            onFocus={e => (e.currentTarget.style.borderColor = 'var(--plum-xlight)')}
-            onBlur={e => (e.currentTarget.style.borderColor = 'var(--lavender-dark)')}
-          >
-            <input
-              ref={inputRef}
-              value={input}
-              onChange={e => setInput(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter') send(); }}
-              placeholder="Reply as a customer…"
-              style={{ flex: 1, background: 'none', border: 'none', outline: 'none', fontSize: 13, fontFamily: 'var(--font-ui)', color: 'var(--text-dark)', padding: '10px 0' }}
-            />
+        <div style={{ background: 'white', borderTop: '1px solid var(--border)', padding: '12px 24px', display: 'flex', flexDirection: 'column', gap: 8, flexShrink: 0 }}>
+          {/* Mic error or warning */}
+          {micError && (
+            <div style={{ fontSize: 11, color: '#DC2626', background: '#FEF2F2', borderRadius: 6, padding: '5px 10px' }}>
+              {micError}
+            </div>
+          )}
+          {/* Voice activity status strip */}
+          {voiceState && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <div style={{
+                width: 7, height: 7, borderRadius: '50%', flexShrink: 0,
+                background:
+                  voiceState === 'user_speaking'  ? '#DC2626' :
+                  voiceState === 'agent_speaking' ? 'var(--plum)' :
+                  voiceState === 'thinking'       ? '#F59E0B' : '#10B981',
+                animation: 'pip-pulse 1.2s ease-in-out infinite',
+              }} />
+              <span style={{ fontSize: 11, fontWeight: 500, color: 'var(--text-soft)' }}>
+                {voiceState === 'connecting'     && 'Connecting voice…'}
+                {voiceState === 'listening'      && 'Listening — speak naturally'}
+                {voiceState === 'user_speaking'  && 'Hearing you…'}
+                {voiceState === 'thinking'       && 'Thinking…'}
+                {voiceState === 'agent_speaking' && 'Agent speaking…'}
+              </span>
+            </div>
+          )}
+          {/* Text input row */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div style={{ flex: 1, background: 'var(--lavender-bg)', border: '1px solid var(--lavender-dark)', borderRadius: 8, display: 'flex', alignItems: 'center', padding: '0 12px' }}>
+              <input
+                ref={inputRef}
+                value={input}
+                onChange={e => setInput(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter' && !isBusy) send(); }}
+                disabled={isBusy}
+                placeholder={isBusy ? '…' : 'Or type a message'}
+                style={{ flex: 1, background: 'none', border: 'none', outline: 'none', fontSize: 13, fontFamily: 'var(--font-ui)', color: isBusy ? 'var(--text-soft)' : 'var(--text-dark)', padding: '10px 0' }}
+              />
+            </div>
+            <button
+              onClick={() => send()}
+              disabled={!input.trim() || isBusy}
+              style={{
+                background: 'var(--plum)', color: 'white', border: 'none', borderRadius: 8,
+                padding: '9px 16px', fontSize: 13, fontWeight: 600, fontFamily: 'var(--font-ui)',
+                cursor: (!input.trim() || isBusy) ? 'not-allowed' : 'pointer',
+                display: 'flex', alignItems: 'center', gap: 6,
+                opacity: (!input.trim() || isBusy) ? 0.4 : 1, transition: 'background 0.15s',
+              }}
+              onMouseEnter={e => { if (input.trim() && !isBusy) e.currentTarget.style.background = 'var(--plum-mid)'; }}
+              onMouseLeave={e => (e.currentTarget.style.background = 'var(--plum)')}
+            >
+              <Ic.Send /> Send
+            </button>
           </div>
-          <button onClick={() => send()} disabled={!input.trim()} style={{
-            background: 'var(--plum)', color: 'white', border: 'none', borderRadius: 8,
-            padding: '9px 16px', fontSize: 13, fontWeight: 600, fontFamily: 'var(--font-ui)',
-            cursor: input.trim() ? 'pointer' : 'not-allowed',
-            display: 'flex', alignItems: 'center', gap: 6,
-            opacity: input.trim() ? 1 : 0.4, transition: 'background 0.15s',
-          }}
-            onMouseEnter={e => { if (input.trim()) e.currentTarget.style.background = 'var(--plum-mid)'; }}
-            onMouseLeave={e => (e.currentTarget.style.background = 'var(--plum)')}
-          >
-            <Ic.Send /> Send
-          </button>
         </div>
       )}
     </div>

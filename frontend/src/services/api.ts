@@ -84,6 +84,32 @@ export const deleteAgent = async (id: number): Promise<void> => {
 };
 
 // Update editable fields on an existing agent (name, services, hours, instructions, active toggle)
+// ── VOICE: STT ──────────────────────────────────────────────────────────────
+// Send a raw audio Blob (webm from MediaRecorder) to the backend, which runs
+// OpenAI Whisper and returns the transcribed text string.
+export const transcribeAudio = async (agentId: number, audioBlob: Blob): Promise<string> => {
+  const headers = await getAuthHeaders();
+  const form = new FormData();
+  form.append('file', audioBlob, 'recording.webm');
+  const res = await axios.post(`/agents/${agentId}/transcribe`, form, {
+    headers: { ...headers, 'Content-Type': 'multipart/form-data' },
+  });
+  return res.data.text as string;
+};
+
+// ── VOICE: TTS ──────────────────────────────────────────────────────────────
+// Send the agent's text reply to the backend TTS endpoint and get back an
+// audio Blob (mp3).  Caller creates a blob URL and plays it with <audio>.
+export const speakText = async (agentId: number, text: string, voice = 'coral'): Promise<Blob> => {
+  const headers = await getAuthHeaders();
+  const res = await axios.post(
+    `/agents/${agentId}/speak`,
+    { text, voice },
+    { headers, responseType: 'blob' },
+  );
+  return res.data as Blob;
+};
+
 export const uploadAgentContextPdf = async (
   agentId: number,
   file: File,
@@ -140,6 +166,17 @@ export const saveConversation = async (
 ): Promise<void> => {
   const headers = await getAuthHeaders();
   await axios.post(`/agents/${agentId}/conversations`, { messages, elapsed_seconds: elapsedSeconds }, { headers });
+};
+
+// ── VOICE: REALTIME SESSION TOKEN ───────────────────────────────────────────
+// Fetches a short-lived ephemeral token from the backend so the browser can
+// open a WebSocket to the OpenAI Realtime API without exposing the API key.
+export const getRealtimeToken = async (
+  agentId: number,
+): Promise<{ client_secret: { value: string; expires_at: number } }> => {
+  const headers = await getAuthHeaders();
+  const res = await axios.get(`/agents/${agentId}/realtime-token`, { headers });
+  return res.data;
 };
 
 export const getCalendarStatus = async (): Promise<{ connected: boolean }> => {
