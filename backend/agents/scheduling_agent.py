@@ -192,18 +192,25 @@ class SchedulingAgent:
         agent = create_tool_calling_agent(llm, self.tools, prompt)
         return AgentExecutor(agent=agent, tools=self.tools, verbose=True, max_iterations=6)
 
+    @staticmethod
+    def _escape(text: str) -> str:
+        """Escape curly braces so LangChain doesn't treat user text as f-string variables."""
+        return text.replace("{", "{{").replace("}", "}}")
+
     def build_system_prompt(self) -> str:
         now = datetime.now(ZoneInfo("America/Los_Angeles"))
         parts = [
             f"Today is {now.strftime('%A, %B %-d, %Y')}. Current time: {now.strftime('%-I:%M %p %Z')}.",
-            f"You are an assistant for {self.config.name}.",
+            f"You are an assistant for {self._escape(self.config.name)}.",
         ]
         if self.config.services:
-            parts.append(f"Services offered: {self.config.services}.")
+            parts.append(f"Services offered: {self._escape(self.config.services)}.")
         if self.config.business_hours:
-            parts.append(f"Business hours: {self.config.business_hours}.")
+            parts.append(f"Business hours: {self._escape(self.config.business_hours)}.")
         if self.config.agent_instructions:
-            parts.append(f"Instructions from business: {self.config.agent_instructions}")
+            parts.append(f"Instructions from business: {self._escape(self.config.agent_instructions)}")
+        if self.config.context:
+            parts.append(f"Additional business context (use this to answer questions about pricing, policies, and details):\n{self._escape(self.config.context)}")
         parts.append(
             "You help callers book, reschedule, or cancel appointments, and answer any questions about the business. "
             "When asked about hours, services, pricing, or any other business details, share what you know from the "

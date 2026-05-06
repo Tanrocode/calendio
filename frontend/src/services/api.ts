@@ -30,6 +30,7 @@ export type AgentConfig = {
   services: string | null;
   business_hours: string | null;
   agent_instructions: string | null;
+  context: string | null;
   is_active: boolean;
   created_at: string | null;
 };
@@ -83,6 +84,19 @@ export const deleteAgent = async (id: number): Promise<void> => {
 };
 
 // Update editable fields on an existing agent (name, services, hours, instructions, active toggle)
+export const uploadAgentContextPdf = async (
+  agentId: number,
+  file: File,
+): Promise<{ extracted_chars: number; pages: number; context: string }> => {
+  const headers = await getAuthHeaders();
+  const form = new FormData();
+  form.append('file', file);
+  const res = await axios.post(`/agents/${agentId}/upload-context`, form, {
+    headers: { ...headers, 'Content-Type': 'multipart/form-data' },
+  });
+  return res.data;
+};
+
 export const updateAgent = async (
   id: number,
   data: {
@@ -90,6 +104,7 @@ export const updateAgent = async (
     services?: string;
     business_hours?: string;
     agent_instructions?: string;
+    context?: string;
     is_active?: boolean;
   }
 ): Promise<AgentConfig> => {

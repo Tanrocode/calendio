@@ -3,7 +3,7 @@ import logging
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from pydantic import BaseModel
 
 from ..supabase_auth import CurrentUser, get_current_user
@@ -19,6 +19,7 @@ class AgentCreate(BaseModel):
     services: Optional[str] = None
     business_hours: Optional[str] = None
     agent_instructions: Optional[str] = None
+    context: Optional[str] = None
 
 
 class AgentUpdate(BaseModel):
@@ -27,6 +28,7 @@ class AgentUpdate(BaseModel):
     services: Optional[str] = None
     business_hours: Optional[str] = None
     agent_instructions: Optional[str] = None
+    context: Optional[str] = None
     is_active: Optional[bool] = None
 
 
@@ -102,6 +104,7 @@ def agent_chat(
         services=config_data.get("services"),
         business_hours=config_data.get("business_hours"),
         agent_instructions=config_data.get("agent_instructions"),
+        context=config_data.get("context"),
     ))
     # Individual turns are NOT logged here — the full conversation is saved as one
     # record when the user ends the call (POST /{agent_id}/conversations).
@@ -193,6 +196,63 @@ def update_agent(
         .execute()
     )
     return result.data[0]
+
+
+PDF_PAGE_LIMIT = 6
+
+
+@router.post("/{agent_id}/upload-context")
+def upload_context_pdf(
+    agent_id: int,
+    file: UploadFile = File(...),
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    """Extract text from a PDF (max 6 pages) and save it as the agent's context."""
+    import io
+    try:
+        import pdfplumber
+    except ImportError:
+        raise HTTPException(status_code=500, detail="pdfplumber is not installed on the server.")
+
+    if not file.filename or not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Only PDF files are accepted.")
+
+    # Verify agent belongs to this user
+    existing = (
+        supabase.table("agent_configs")
+        .select("id")
+        .eq("id", agent_id)
+        .eq("user_id", current_user.id)
+        .execute()
+    )
+    if not existing.data:
+        raise HTTPException(status_code=404, detail="Agent not found.")
+
+    raw = file.file.read()
+    with pdfplumber.open(io.BytesIO(raw)) as pdf:
+        page_count = len(pdf.pages)
+        if page_count > PDF_PAGE_LIMIT:
+            raise HTTPException(
+                status_code=400,
+                detail=f"PDF has {page_count} pages — limit is {PDF_PAGE_LIMIT}. Please upload a shorter document.",
+            )
+        text_parts = []
+        for page in pdf.pages:
+            page_text = page.extract_text()
+            if page_text:
+                text_parts.append(page_text.strip())
+
+    extracted = "\n\n".join(text_parts).strip()
+    if not extracted:
+        raise HTTPException(status_code=400, detail="Could not extract any text from the PDF.")
+
+    result = (
+        supabase.table("agent_configs")
+        .update({"context": extracted})
+        .eq("id", agent_id)
+        .execute()
+    )
+    return {"extracted_chars": len(extracted), "pages": page_count, "context": extracted}
 
 
 @router.delete("/{agent_id}")

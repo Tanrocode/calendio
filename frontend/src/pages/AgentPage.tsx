@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { getAgent, deleteAgent, updateAgent, chatWithAgent, saveConversation, getCalendarStatus, getCalendarAuthUrl } from '../services/api';
+import { getAgent, deleteAgent, updateAgent, uploadAgentContextPdf, chatWithAgent, saveConversation, getCalendarStatus, getCalendarAuthUrl } from '../services/api';
 import type { AgentConfig } from '../services/api';
 import BusinessHoursEditor, { parseWeekHours, fmtTime } from '../components/BusinessHoursEditor';
 import Sidebar from '../components/Sidebar';
@@ -367,11 +367,16 @@ const AgentPage: React.FC = () => {
   const [calendarLoading, setCalendarLoading] = useState(false);
   const [tone, setTone] = useState('Friendly');
 
-  // Edit mode — allows updating name, services, hours, instructions inline
+  // Edit mode — allows updating name, services, hours, instructions, context inline
   const [editMode, setEditMode] = useState(false);
-  const [editForm, setEditForm] = useState({ name: '', services: '', business_hours: '', agent_instructions: '' });
+  const [editForm, setEditForm] = useState({ name: '', services: '', business_hours: '', agent_instructions: '', context: '' });
   const [editSaving, setEditSaving] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
+
+  // PDF upload state (context section)
+  const [pdfUploading, setPdfUploading] = useState(false);
+  const [pdfError, setPdfError] = useState<string | null>(null);
+  const pdfInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!id) return;
@@ -405,6 +410,7 @@ const AgentPage: React.FC = () => {
       services: agent.services ?? '',
       business_hours: agent.business_hours ?? '',
       agent_instructions: agent.agent_instructions ?? '',
+      context: agent.context ?? '',
     });
     setEditError(null);
     setEditMode(true);
@@ -423,6 +429,7 @@ const AgentPage: React.FC = () => {
         services: editForm.services || undefined,
         business_hours: editForm.business_hours || undefined,
         agent_instructions: editForm.agent_instructions || undefined,
+        context: editForm.context || undefined,
       });
       setAgent(updated);
       setEditMode(false);
@@ -430,6 +437,24 @@ const AgentPage: React.FC = () => {
       setEditError('Failed to save. Please try again.');
     } finally {
       setEditSaving(false);
+    }
+  };
+
+  const handlePdfUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !agent) return;
+    setPdfError(null);
+    setPdfUploading(true);
+    try {
+      const result = await uploadAgentContextPdf(agent.id, file);
+      setAgent(a => a ? { ...a, context: result.context } : a);
+      setEditForm(f => ({ ...f, context: result.context }));
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ?? 'Upload failed.';
+      setPdfError(msg);
+    } finally {
+      setPdfUploading(false);
+      if (pdfInputRef.current) pdfInputRef.current.value = '';
     }
   };
 
@@ -616,6 +641,53 @@ const AgentPage: React.FC = () => {
               ) : (
                 <div style={{ fontSize: 12, color: agent.agent_instructions ? 'var(--text-dark)' : 'var(--text-soft)', lineHeight: 1.6, fontStyle: agent.agent_instructions ? 'normal' : 'italic' }}>
                   {agent.agent_instructions || 'No instructions set'}
+                </div>
+              )}
+            </div>
+
+            {/* Business Context */}
+            <div style={panelSection}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                <div style={panelSectionTitle as React.CSSProperties}>Business Context</div>
+                {editMode && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    {pdfUploading && <span style={{ fontSize: 10, color: 'var(--text-soft)' }}>Uploading…</span>}
+                    <button
+                      onClick={() => pdfInputRef.current?.click()}
+                      disabled={pdfUploading}
+                      style={{ fontSize: 10, fontWeight: 600, color: 'var(--plum-mid)', background: 'var(--plum-bg)', border: '1px solid var(--lavender-dark)', borderRadius: 5, padding: '3px 8px', cursor: pdfUploading ? 'not-allowed' : 'pointer', fontFamily: 'var(--font-ui)', opacity: pdfUploading ? 0.5 : 1 }}
+                    >
+                      Upload PDF
+                    </button>
+                    <input ref={pdfInputRef} type="file" accept=".pdf" style={{ display: 'none' }} onChange={handlePdfUpload} />
+                  </div>
+                )}
+              </div>
+              {pdfError && (
+                <div style={{ fontSize: 11, color: '#DC2626', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 6, padding: '5px 8px', marginBottom: 8 }}>
+                  {pdfError}
+                </div>
+              )}
+              {editMode ? (
+                <>
+                  <textarea
+                    rows={5}
+                    value={editForm.context}
+                    onChange={e => setEditForm(f => ({ ...f, context: e.target.value }))}
+                    placeholder="Prices, policies, FAQs, product details — anything the agent should know to answer customer questions…"
+                    style={{ ...fieldInputStyle, resize: 'vertical' }}
+                    onFocus={e => (e.target.style.borderColor = 'var(--plum-xlight)')}
+                    onBlur={e => (e.target.style.borderColor = 'var(--lavender-dark)')}
+                  />
+                  <div style={{ fontSize: 10, color: 'var(--text-soft)', marginTop: 4, textAlign: 'right' }}>
+                    {editForm.context.length.toLocaleString()} chars · PDF max 6 pages
+                  </div>
+                </>
+              ) : (
+                <div style={{ fontSize: 12, color: agent.context ? 'var(--text-dark)' : 'var(--text-soft)', lineHeight: 1.6, fontStyle: agent.context ? 'normal' : 'italic', maxHeight: 120, overflowY: 'auto' }}>
+                  {agent.context
+                    ? <span>{agent.context.slice(0, 300)}{agent.context.length > 300 ? '…' : ''}</span>
+                    : 'No context added — upload a PDF or type details in edit mode'}
                 </div>
               )}
             </div>
