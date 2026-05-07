@@ -100,7 +100,7 @@ export const transcribeAudio = async (agentId: number, audioBlob: Blob): Promise
 // ── VOICE: TTS ──────────────────────────────────────────────────────────────
 // Send the agent's text reply to the backend TTS endpoint and get back an
 // audio Blob (mp3).  Caller creates a blob URL and plays it with <audio>.
-export const speakText = async (agentId: number, text: string, voice = 'coral'): Promise<Blob> => {
+export const speakText = async (agentId: number, text: string, voice = 'nova'): Promise<Blob> => {
   const headers = await getAuthHeaders();
   const res = await axios.post(
     `/agents/${agentId}/speak`,
@@ -176,6 +176,19 @@ export const getRealtimeToken = async (
 ): Promise<{ client_secret: { value: string; expires_at: number } }> => {
   const headers = await getAuthHeaders();
   const res = await axios.get(`/agents/${agentId}/realtime-token`, { headers });
+  return res.data;
+};
+
+export const bookFromTranscript = async (
+  agentId: number,
+  messages: { role: string; content: string }[],
+): Promise<{ booked: boolean; error?: string; event?: Record<string, unknown> }> => {
+  const headers = await getAuthHeaders();
+  const res = await axios.post(
+    `/agents/${agentId}/book-from-transcript`,
+    { messages },
+    { headers, withCredentials: true },
+  );
   return res.data;
 };
 

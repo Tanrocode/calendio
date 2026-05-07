@@ -27,24 +27,17 @@ def get_metrics(current_user: CurrentUser = Depends(get_current_user)):
         if c.get("ended_at", "").startswith(today_str)
     )
 
-    # Appointments booked — still from metrics table (no better source yet)
-    metric_result = (
-        supabase.table("metrics")
-        .select("total_appointments_created")
-        .eq("user_id", current_user.id)
-        .execute()
-    )
-    metric = metric_result.data[0] if metric_result.data else None
-
-    upcoming_result = (
+    # Count appointments directly from the appointments table — the metrics table
+    # was under-incremented in previous versions so this is more reliable.
+    all_appts = (
         supabase.table("appointments")
-        .select("*")
+        .select("customer_name, service, start_time, end_time")
         .eq("user_id", current_user.id)
-        .gte("start_time", now.isoformat())
-        .order("start_time")
         .execute()
     )
+    total_appointments_created = len(all_appts.data)
 
+    # Upcoming appointments for Today's Schedule (start_time in the future)
     upcoming = [
         {
             "customer_name": a["customer_name"],
@@ -52,14 +45,16 @@ def get_metrics(current_user: CurrentUser = Depends(get_current_user)):
             "start_time": a["start_time"],
             "end_time": a["end_time"],
         }
-        for a in upcoming_result.data
+        for a in all_appts.data
+        if (a.get("start_time") or "") >= now.date().isoformat()
     ]
+    upcoming.sort(key=lambda a: a["start_time"])
 
     return {
         "metrics": {
             "total_conversations": total_conversations,
             "conversations_today": conversations_today,
-            "total_appointments_created": metric["total_appointments_created"] if metric else 0,
+            "total_appointments_created": total_appointments_created,
         },
         "upcoming_appointments": upcoming,
     }

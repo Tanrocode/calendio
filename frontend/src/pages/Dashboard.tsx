@@ -413,8 +413,8 @@ const Dashboard: React.FC = () => {
 
           {/* Stat strip */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 12 }}>
-            <StatTile label="Conversations" value={String(metrics.total_conversations)} delta={`+${metrics.conversations_today} today`} up={metrics.conversations_today > 0} />
-            <StatTile label="Appointments Booked" value={String(metrics.total_appointments_created)} delta="+0 today" up={false} accent="accent" />
+            <StatTile label="Total Calls" value={String(metrics.total_conversations)} delta={`${metrics.conversations_today} calls today`} up={metrics.conversations_today > 0} />
+            <StatTile label="Appointments Booked" value={String(metrics.total_appointments_created)} accent="accent" />
             <StatTile label="Booking Rate" value={rate} accent="green" />
             <StatTile label="Active Agents" value={`${activeCount} / ${agents.length}`} delta={agents.length - activeCount > 0 ? `${agents.length - activeCount} inactive` : undefined} />
           </div>
@@ -517,21 +517,38 @@ const Dashboard: React.FC = () => {
                     const ts = conv.ended_at
                       ? new Date(conv.ended_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
                       : '';
+                    const outcome = conv.outcome;
+                    const outcomeStyle: Record<string, React.CSSProperties> = {
+                      'Booked':      { background: '#DCFCE7', color: '#15803D' },
+                      'Rescheduled': { background: '#DBEAFE', color: '#1D4ED8' },
+                      'Cancelled':   { background: '#FEE2E2', color: '#B91C1C' },
+                      'No result':   { background: '#F3F4F6', color: '#6B7280' },
+                    };
+                    const badgeStyle = outcome ? (outcomeStyle[outcome] ?? outcomeStyle['No result']) : null;
                     return (
                       <div key={conv.id ?? i} style={{
-                        padding: '12px 20px',
+                        padding: '11px 20px',
                         borderBottom: i < recentActivity.length - 1 ? '1px solid var(--lavender-bg)' : 'none',
-                        display: 'flex', flexDirection: 'column', gap: 4,
+                        display: 'flex', alignItems: 'center', gap: 10,
                       }}>
-                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
-                          <div style={{ flexShrink: 0, width: 20, height: 20, borderRadius: '50%', background: 'var(--text-soft)', color: 'white', fontSize: 8, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>U</div>
-                          <div style={{ fontSize: 12, color: 'var(--text-dark)', flex: 1, lineHeight: 1.4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        <div style={{ flexShrink: 0, width: 20, height: 20, borderRadius: '50%', background: 'var(--text-soft)', color: 'white', fontSize: 8, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>U</div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 12, color: 'var(--text-dark)', lineHeight: 1.4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                             {conv.summary}
                           </div>
+                          {ts && (
+                            <div style={{ fontSize: 10, color: 'var(--text-soft)', marginTop: 2, display: 'flex', alignItems: 'center', gap: 4 }}>
+                              <Ic.Clock />{ts}
+                            </div>
+                          )}
                         </div>
-                        {ts && (
-                          <div style={{ fontSize: 10, color: 'var(--text-soft)', marginLeft: 28, display: 'flex', alignItems: 'center', gap: 4 }}>
-                            <Ic.Clock />{ts}
+                        {badgeStyle && (
+                          <div style={{
+                            flexShrink: 0, fontSize: 10, fontWeight: 700, padding: '2px 8px',
+                            borderRadius: 100, whiteSpace: 'nowrap', letterSpacing: '0.02em',
+                            ...badgeStyle,
+                          }}>
+                            {outcome === 'Booked' ? '✓ Booked' : outcome}
                           </div>
                         )}
                       </div>

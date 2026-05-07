@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import os
 import re
+import time as _time
 import logging
 from contextvars import ContextVar
-from datetime import datetime, time as time_type
+from datetime import datetime, timedelta, time as time_type
 from typing import Any, Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 
@@ -29,6 +30,13 @@ _BUSINESS_CTX: ContextVar[Optional[Dict[str, Optional[str]]]] = ContextVar(
 
 # Route debug logs through Uvicorn's logger so they appear in the server terminal.
 logger = logging.getLogger("uvicorn.error")
+
+# Short-lived availability caches so the LLM never re-hits the Calendar API for
+# a slot it already fetched in the same conversation.  Keyed by the query args;
+# entries expire after 2 minutes so stale data can't block a real booking.
+_AVAIL_CACHE:  Dict[str, Tuple[Any, float]] = {}
+_EVENTS_CACHE: Dict[str, Tuple[Any, float]] = {}
+_CACHE_TTL = 120  # seconds
 
 
 _DAY_MAP = {
@@ -75,14 +83,37 @@ def _within_business_hours(start_dt: datetime, end_dt: datetime, hours_str: str)
     """Return (ok, reason). reason is non-empty only when ok=False."""
     if not hours_str:
         return True, ""
-    appt_day = start_dt.weekday()
+
+    appt_day   = start_dt.weekday()                        # 0 = Mon … 6 = Sun
     appt_start = start_dt.timetz().replace(tzinfo=None)
-    appt_end = end_dt.timetz().replace(tzinfo=None)
+    appt_end   = end_dt.timetz().replace(tzinfo=None)
+
+    # ── JSON format (BusinessHoursEditor stores this) ──────────────────────
+    # e.g. {"Mon":{"open":"09:00","close":"17:00"}, "Tue":{...}, ...}
+    stripped = hours_str.strip()
+    if stripped.startswith("{"):
+        try:
+            import json as _json
+            _day_names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+            schedule: Dict[str, Any] = _json.loads(stripped)
+            day_name = _day_names[appt_day]
+            if day_name not in schedule:
+                return False, f"The business is not open on {day_name}s."
+            slot   = schedule[day_name]
+            opens  = time_type(*[int(x) for x in slot["open"].split(":")])
+            closes = time_type(*[int(x) for x in slot["close"].split(":")])
+            if appt_start >= opens and appt_end <= closes:
+                return True, ""
+            return False, (
+                f"That time is outside business hours. "
+                f"On {day_name}s the business is open {slot['open']}–{slot['close']}. "
+                "Please offer a time within those hours."
+            )
+        except Exception:
+            pass  # malformed JSON — fall through to text parser
+
+    # ── Legacy text format ("Mon-Fri 9am-5pm, Sat 10am-3pm") ──────────────
     for segment in hours_str.split(","):
-        # Accept common variants:
-        # - Mon-Fri 9am-5pm
-        # - Mon-Fri 9:00 AM - 5:00 PM
-        # - Tue 10 - 18
         m = re.match(
             r"^([A-Za-z]+(?:\s*-\s*[A-Za-z]+)?)\s+(.+?)\s*[-–]\s*(.+)$",
             segment.strip(),
@@ -90,8 +121,8 @@ def _within_business_hours(start_dt: datetime, end_dt: datetime, hours_str: str)
         if not m:
             continue
         try:
-            days = _day_range(m.group(1))
-            opens = _parse_clock(m.group(2))
+            days   = _day_range(m.group(1))
+            opens  = _parse_clock(m.group(2))
             closes = _parse_clock(m.group(3))
         except ValueError:
             continue
@@ -152,17 +183,28 @@ def _get_credentials() -> Credentials:
 
 
 class SchedulingAgent:
-    def __init__(self, config: AgentCreate):
+    def __init__(self, config: AgentCreate, call_mode: bool = False):
         self.config = config
-        # LangChain passes these callables to the LLM as "tools" it may invoke with arguments.
-        self.tools = [
-            check_availability,  # free/busy for a window
-            create_appointment,  # insert + mirror row in Supabase
-            list_calendar_events,  # optional text filter via Google's "q" param
-            find_events_by_text,  # same list API, always sets a search string (e.g. phone)
-            delete_calendar_event,  # by Google event id
-            reschedule_calendar_event,  # patch start/end on existing id
-        ]
+        # call_mode=True is used during live voice calls.
+        # Write tools (create/reschedule/delete) are excluded so the agent never
+        # blocks the conversation waiting for a Google Calendar API write.
+        # Bookings are queued verbally and processed after the call ends.
+        self.call_mode = call_mode
+        if call_mode:
+            self.tools = [
+                check_availability,
+                list_calendar_events,
+                find_events_by_text,
+            ]
+        else:
+            self.tools = [
+                check_availability,
+                create_appointment,
+                list_calendar_events,
+                find_events_by_text,
+                delete_calendar_event,
+                reschedule_calendar_event,
+            ]
         self.agent = self._build_agent()
 
     def _build_agent(self):
@@ -211,17 +253,29 @@ class SchedulingAgent:
             parts.append(f"Instructions from business: {self._escape(self.config.agent_instructions)}")
         if self.config.context:
             parts.append(f"Additional business context (use this to answer questions about pricing, policies, and details):\n{self._escape(self.config.context)}")
-        parts.append(
-            "You help callers book, reschedule, or cancel appointments, and answer any questions about the business. "
-            "When asked about hours, services, pricing, or any other business details, share what you know from the "
-            "information above — be warm, helpful, and informative. "
-            "IMPORTANT: Never book outside business hours — if a caller requests a time outside those hours, "
-            "decline politely and suggest the nearest available slot within hours. "
-            "Always check availability before booking. Use ISO 8601 datetime strings in the business timezone for all tool calls. "
-            "To reschedule: first use list_calendar_events or find_events_by_text to locate the event id, then call "
-            "reschedule_calendar_event with the id and new times. "
-            "To cancel: find the event id the same way, then call delete_calendar_event."
-        )
+
+        if self.call_mode:
+            parts.append(
+                "You are on a live voice call. Keep replies short and conversational — one or two sentences at most. "
+                "You can check availability and look up existing appointments, but you CANNOT create, reschedule, or cancel appointments during this call. "
+                "When a caller wants to book, collect the date, time, service, and their name verbally, then tell them: "
+                "'Great — I've got all the details and will confirm your booking right after our call.' "
+                "Do NOT attempt to book during the call. Booking is handled after the call ends. "
+                "When asked about hours, services, pricing, or other business details, share what you know. "
+                "Always check availability before confirming a time slot. Use ISO 8601 datetime strings in the business timezone for tool calls."
+            )
+        else:
+            parts.append(
+                "You help callers book, reschedule, or cancel appointments, and answer any questions about the business. "
+                "When asked about hours, services, pricing, or any other business details, share what you know from the "
+                "information above — be warm, helpful, and informative. "
+                "IMPORTANT: Never book outside business hours — if a caller requests a time outside those hours, "
+                "decline politely and suggest the nearest available slot within hours. "
+                "Always check availability before booking. Use ISO 8601 datetime strings in the business timezone for all tool calls. "
+                "To reschedule: first use list_calendar_events or find_events_by_text to locate the event id, then call "
+                "reschedule_calendar_event with the id and new times. "
+                "To cancel: find the event id the same way, then call delete_calendar_event."
+            )
         return " ".join(parts)
 
     def run(
@@ -283,6 +337,13 @@ class SchedulingAgent:
 @tool
 def check_availability(business_id: int, start_datetime: str, end_datetime: str) -> bool:
     """Check if the requested time range is free on the business's Google Calendar."""
+    cache_key = f"avail|{start_datetime}|{end_datetime}"
+    now = _time.monotonic()
+    if cache_key in _AVAIL_CACHE:
+        val, exp = _AVAIL_CACHE[cache_key]
+        if now < exp:
+            logger.debug("check_availability: cache hit %s–%s", start_datetime, end_datetime)
+            return val
 
     calendar_id, timezone = _get_calendar_id_and_timezone()
     creds = _get_credentials()
@@ -305,7 +366,61 @@ def check_availability(business_id: int, start_datetime: str, end_datetime: str)
     calendars = result.get("calendars", {}) or {}
     cal = calendars.get(calendar_id) or (next(iter(calendars.values()), {}) if calendars else {})
     busy = cal.get("busy", []) or []
-    return len(busy) == 0
+    is_free = len(busy) == 0
+    _AVAIL_CACHE[cache_key] = (is_free, now + _CACHE_TTL)
+    return is_free
+
+
+def _create_appointment_impl(
+    business_id: int,
+    start_datetime: str,
+    end_datetime: str,
+    service_name: str = "Appointment",
+    customer_name: str = "Client",
+    description: str = "",
+) -> Dict[str, Any]:
+    """Core appointment creation logic shared by the @tool and post-call booking."""
+    calendar_id, timezone = _get_calendar_id_and_timezone()
+    start_dt = _parse_datetime_in_tz(start_datetime, timezone)
+    end_dt   = _parse_datetime_in_tz(end_datetime, timezone)
+
+    # Only enforce business hours when the context has them set.
+    business_hours = (_BUSINESS_CTX.get() or {}).get("business_hours", "")
+    if business_hours:
+        ok, reason = _within_business_hours(start_dt, end_dt, business_hours)
+        if not ok:
+            return {"booked": False, "error": reason}
+
+    creds = _get_credentials()
+    gcal_service = build("calendar", "v3", credentials=creds)
+    event_body = {
+        "summary": service_name or "Appointment",
+        "description": description or "",
+        "start": {"dateTime": start_dt.isoformat(), "timeZone": timezone},
+        "end":   {"dateTime": end_dt.isoformat(),   "timeZone": timezone},
+    }
+    created = gcal_service.events().insert(calendarId=calendar_id, body=event_body).execute()
+    google_event_id = created.get("id")
+
+    ctx = _BUSINESS_CTX.get() or {}
+    agent_id_raw = ctx.get("agent_id")
+    if not agent_id_raw:
+        raise RuntimeError("Missing agent_id in context for appointment insert.")
+
+    supabase.table("appointments").insert({
+        "agent_id": int(agent_id_raw),
+        "user_id": business_id,
+        "customer_name": customer_name or "Client",
+        "service": service_name or "",
+        "start_time": start_dt.replace(tzinfo=None).isoformat(),
+        "end_time":   end_dt.replace(tzinfo=None).isoformat(),
+        "google_event_id": google_event_id,
+    }).execute()
+
+    return {
+        "google_event_id": google_event_id,
+        "google_event_link": created.get("htmlLink"),
+    }
 
 
 @tool
@@ -322,48 +437,9 @@ def create_appointment(
     Required: business_id, start_datetime, end_datetime (ISO 8601 in business timezone).
     Optional: service, customer_name, description.
     """
-
-    calendar_id, timezone = _get_calendar_id_and_timezone()
-
-    start_dt = _parse_datetime_in_tz(start_datetime, timezone)
-    end_dt = _parse_datetime_in_tz(end_datetime, timezone)
-
-    business_hours = (_BUSINESS_CTX.get() or {}).get("business_hours", "")
-    ok, reason = _within_business_hours(start_dt, end_dt, business_hours)
-    if not ok:
-        return {"booked": False, "error": reason}
-
-    creds = _get_credentials()
-    gcal_service = build("calendar", "v3", credentials=creds)
-    event = {
-        "summary": service_name or "Appointment",
-        "description": description or "",
-        "start": {"dateTime": start_dt.isoformat(), "timeZone": timezone},
-        "end": {"dateTime": end_dt.isoformat(), "timeZone": timezone},
-    }
-
-    created_event = gcal_service.events().insert(calendarId=calendar_id, body=event).execute()
-    google_event_id = created_event.get("id")
-
-    ctx = _BUSINESS_CTX.get() or {}
-    agent_id_raw = ctx.get("agent_id")
-    if not agent_id_raw:
-        raise RuntimeError("Missing agent_id in context for appointment insert.")
-
-    supabase.table("appointments").insert({
-        "agent_id": int(agent_id_raw),
-        "user_id": business_id,
-        "customer_name": customer_name or "Client",
-        "service": service_name or "",
-        "start_time": start_dt.replace(tzinfo=None).isoformat(),
-        "end_time": end_dt.replace(tzinfo=None).isoformat(),
-        "google_event_id": google_event_id,
-    }).execute()
-
-    return {
-        "google_event_id": google_event_id,
-        "google_event_link": created_event.get("htmlLink"),
-    }
+    return _create_appointment_impl(
+        business_id, start_datetime, end_datetime, service_name, customer_name, description
+    )
 
 
 def _list_events_impl(
@@ -373,6 +449,13 @@ def _list_events_impl(
     max_results: int,
 ) -> List[Dict[str, Any]]:
     """Shared implementation for list + search tools (one Google API call shape)."""
+    cache_key = f"events|{time_min}|{time_max}|{text_query}|{max_results}"
+    now = _time.monotonic()
+    if cache_key in _EVENTS_CACHE:
+        val, exp = _EVENTS_CACHE[cache_key]
+        if now < exp:
+            return val
+
     calendar_id, timezone = _get_calendar_id_and_timezone()
     creds = _get_credentials()
     start_dt = _parse_datetime_in_tz(time_min, timezone)
@@ -412,6 +495,7 @@ def _list_events_impl(
             "html_link": ev.get("htmlLink"),
             "description_snippet": desc + ("…" if len(raw_desc) > 200 else ""),
         })
+    _EVENTS_CACHE[cache_key] = (out, now + _CACHE_TTL)
     return out
 
 
@@ -503,3 +587,110 @@ def reschedule_calendar_event(
         "start": sid,
         "end": eid,
     }
+
+
+def extract_and_book(
+    agent_config: "AgentCreate",
+    messages: List[Dict[str, str]],
+    user_id: int,
+    agent_id: int,
+    oauth_session: Dict[str, Optional[str]],
+    timezone: str = "America/Los_Angeles",
+) -> Dict[str, Any]:
+    """
+    Called after a voice call ends.  Uses an LLM to extract booking intent from
+    the full transcript, then creates the appointment in Google Calendar and
+    mirrors it in Supabase.  Missing fields default to 'Client' / 'Appointment'.
+    Returns {"booked": bool, ...}.
+    """
+    if not settings.OPENAI_API_KEY:
+        return {"booked": False, "error": "OPENAI_API_KEY not set"}
+
+    from openai import OpenAI as _OpenAI
+    import json as _json
+
+    client = _OpenAI(api_key=settings.OPENAI_API_KEY)
+    transcript = "\n".join(f"{m['role'].upper()}: {m['content']}" for m in messages)
+    now = datetime.now(ZoneInfo(timezone))
+
+    resp = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{
+            "role": "user",
+            "content": (
+                f"Extract appointment details from this call transcript.\n"
+                f"Today: {now.strftime('%A, %B %-d, %Y')}. Timezone: {timezone}.\n"
+                f"Services offered: {agent_config.services or 'Not specified'}.\n\n"
+                "Return ONLY a JSON object with these keys:\n"
+                '  "intent": "book" | "reschedule" | "cancel" | "faq" | "none"\n'
+                '  "outcome": "Booked" | "Rescheduled" | "Cancelled" | "No result"\n'
+                '  "service_name": string (default "Appointment")\n'
+                '  "customer_name": string (default "Client")\n'
+                '  "start_datetime": ISO 8601 string in the given timezone, or null\n'
+                '  "end_datetime": ISO 8601 string (infer from service duration; default +1 hr), or null\n\n'
+                "Rules:\n"
+                '  - intent "book": caller asked to book and a date/time was agreed upon\n'
+                '  - intent "reschedule": caller asked to move an existing appointment\n'
+                '  - intent "cancel": caller asked to cancel an appointment\n'
+                '  - intent "faq": caller only asked questions, no appointment action\n'
+                '  - outcome: what the call accomplished (e.g. "Booked" even if not yet confirmed)\n'
+                "  - Fill missing customer_name → 'Client', missing service → 'Appointment'\n\n"
+                f"TRANSCRIPT:\n{transcript}"
+            ),
+        }],
+        temperature=0,
+        max_tokens=300,
+    )
+
+    try:
+        raw = resp.choices[0].message.content.strip()
+        if "```" in raw:
+            raw = raw.split("```")[1].lstrip("json").strip()
+        details: Dict[str, Any] = _json.loads(raw)
+    except Exception as exc:
+        logger.warning("extract_and_book: JSON parse failed — %s", exc)
+        return {"booked": False, "error": f"Extraction parse error: {exc}"}
+
+    if details.get("intent") not in ("book",):
+        return {"booked": False, "outcome": details.get("outcome") or "No result", "details": details}
+
+    start_str = details.get("start_datetime")
+    end_str   = details.get("end_datetime")
+
+    if not start_str:
+        return {"booked": False, "outcome": "No result", "error": "No appointment time found in transcript", "details": details}
+
+    if not end_str:
+        try:
+            end_str = (_parse_datetime_in_tz(start_str, timezone) + timedelta(hours=1)).isoformat()
+        except Exception:
+            return {"booked": False, "outcome": "No result", "error": "Could not determine end time", "details": details}
+
+    # Set context vars so _create_appointment_impl can access credentials.
+    # Pass business_hours="" to skip hours enforcement — the agent already
+    # confirmed availability verbally during the call.
+    oauth_tok = _OAUTH_SESSION_CTX.set(oauth_session)
+    biz_tok   = _BUSINESS_CTX.set({
+        "calendar_id":   "primary",
+        "timezone":      timezone,
+        "business_hours": "",
+        "agent_id":      str(agent_id),
+    })
+    try:
+        result = _create_appointment_impl(
+            business_id=user_id,
+            start_datetime=start_str,
+            end_datetime=end_str,
+            service_name=details.get("service_name") or "Appointment",
+            customer_name=details.get("customer_name") or "Client",
+            description="",
+        )
+        booked = bool(result.get("google_event_id"))
+        outcome = "Booked" if booked else "No result"
+        return {"booked": booked, "outcome": outcome, "details": details, "event": result}
+    except Exception as exc:
+        logger.exception("extract_and_book: appointment creation failed")
+        return {"booked": False, "outcome": "No result", "error": str(exc), "details": details}
+    finally:
+        _OAUTH_SESSION_CTX.reset(oauth_tok)
+        _BUSINESS_CTX.reset(biz_tok)

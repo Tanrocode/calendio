@@ -106,7 +106,7 @@ def agent_chat(
         business_hours=config_data.get("business_hours"),
         agent_instructions=config_data.get("agent_instructions"),
         context=config_data.get("context"),
-    ))
+    ), call_mode=True)
     # Individual turns are NOT logged here — the full conversation is saved as one
     # record when the user ends the call (POST /{agent_id}/conversations).
     return agent.run(
@@ -303,7 +303,8 @@ def transcribe_audio(
 
 class SpeakBody(BaseModel):
     text: str
-    voice: str = "coral"   # default: warm, natural-sounding voice
+    voice: str = "nova"    # default: bright, energetic voice — fits salon/restaurant staff
+    speed: float = 1.15    # slightly faster than default for a natural cashier cadence
 
 
 @router.post("/{agent_id}/speak")
@@ -339,6 +340,7 @@ def speak_text(
         voice=body.voice,
         input=body.text,
         response_format="mp3",
+        speed=body.speed,
     )
     return Response(content=tts_response.content, media_type="audio/mpeg")
 
@@ -396,6 +398,75 @@ def get_realtime_token(
             detail=f"OpenAI session creation failed: {resp.text}",
         )
     return resp.json()
+
+
+class BookFromTranscriptBody(BaseModel):
+    messages: List[Dict[str, Any]]
+
+
+@router.post("/{agent_id}/book-from-transcript")
+def book_from_transcript(
+    agent_id: int,
+    body: BookFromTranscriptBody,
+    request: Request,
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    """
+    Called after a voice call ends.  Parse the full transcript with an LLM,
+    extract any booking intent, and create the Google Calendar appointment.
+    """
+    from ..agents.scheduling_agent import extract_and_book
+
+    result = (
+        supabase.table("agent_configs")
+        .select("*")
+        .eq("id", agent_id)
+        .eq("user_id", current_user.id)
+        .execute()
+    )
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    if "token" not in request.session:
+        return {"booked": False, "error": "Google Calendar not connected"}
+
+    config_data = result.data[0]
+    booking = extract_and_book(
+        agent_config=AgentCreate(
+            name=config_data["name"],
+            services=config_data.get("services"),
+            business_hours=config_data.get("business_hours"),
+            agent_instructions=config_data.get("agent_instructions"),
+            context=config_data.get("context"),
+        ),
+        messages=body.messages,
+        user_id=current_user.id,
+        agent_id=agent_id,
+        oauth_session={
+            "token":         request.session.get("token"),
+            "refresh_token": request.session.get("refresh_token"),
+        },
+    )
+
+    # Write the outcome back to the most recent conversation row for this agent.
+    # This is what the Recent Activity feed reads to show the outcome badge.
+    outcome = booking.get("outcome") or ("Booked" if booking.get("booked") else "No result")
+    try:
+        latest = (
+            supabase.table("conversations")
+            .select("id")
+            .eq("user_id", current_user.id)
+            .eq("agent_id", agent_id)
+            .order("ended_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        if latest.data:
+            supabase.table("conversations").update({"outcome": outcome}).eq("id", latest.data[0]["id"]).execute()
+    except Exception as exc:
+        logger.warning("Failed to update conversation outcome: %s", exc)
+
+    return booking
 
 
 @router.delete("/{agent_id}")

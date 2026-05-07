@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { getAgent, deleteAgent, updateAgent, uploadAgentContextPdf, chatWithAgent, saveConversation, speakText, getRealtimeToken, getCalendarStatus, getCalendarAuthUrl } from '../services/api';
+import { getAgent, deleteAgent, updateAgent, uploadAgentContextPdf, chatWithAgent, saveConversation, speakText, getRealtimeToken, bookFromTranscript, getCalendarStatus, getCalendarAuthUrl } from '../services/api';
 import type { AgentConfig } from '../services/api';
 import BusinessHoursEditor, { parseWeekHours, fmtTime } from '../components/BusinessHoursEditor';
 import Sidebar from '../components/Sidebar';
@@ -69,7 +69,7 @@ function formatDuration(secs: number): string {
  *   4. Semantic VAD fires speech_started / speech_stopped events automatically
  *   5. On transcript complete → POST /agents/{id}/chat → LangChain reply
  *   6. Reply → POST /agents/{id}/speak → TTS mp3 → plays in browser
- *   7. Mic is muted (muteRef) during TTS to suppress echo feedback
+ *   7. If user speaks while agent is talking, TTS is paused immediately (barge-in)
  *   8. On call end → WebSocket closed, mic released, full transcript saved
  *
  * Text input is always available as a fallback (mic denied, or user prefers
@@ -93,12 +93,13 @@ function arrayBufferToBase64(buffer: ArrayBuffer): string {
 
 const RightPanel: React.FC<{ agent: AgentConfig; calendarConnected: boolean | null }> = ({ agent, calendarConnected }) => {
   // ── call state ─────────────────────────────────────────────────────────────
-  const [callState, setCallState] = useState<CallState>('idle');
-  const [msgs, setMsgs]           = useState<Message[]>([]);
-  const [input, setInput]         = useState('');
-  const [loading, setLoading]     = useState(false); // agent is generating a reply
-  const [elapsed, setElapsed]     = useState(0);     // call duration in seconds
-  const [saveError, setSaveError] = useState<string | null>(null);
+  const [callState, setCallState]       = useState<CallState>('idle');
+  const [msgs, setMsgs]                 = useState<Message[]>([]);
+  const [input, setInput]               = useState('');
+  const [loading, setLoading]           = useState(false); // agent is generating a reply
+  const [elapsed, setElapsed]           = useState(0);     // call duration in seconds
+  const [saveError, setSaveError]       = useState<string | null>(null);
+  const [bookingStatus, setBookingStatus] = useState<'pending' | 'booked' | 'none' | null>(null);
 
   // ── voice state ────────────────────────────────────────────────────────────
   // null when the call is idle or ended; one of VoiceState while active.
@@ -113,7 +114,9 @@ const RightPanel: React.FC<{ agent: AgentConfig; calendarConnected: boolean | nu
   const streamRef       = useRef<MediaStream | null>(null);         // mic media stream
   const processorRef    = useRef<ScriptProcessorNode | null>(null); // PCM capture node
   const audioPlayerRef  = useRef<HTMLAudioElement | null>(null);    // TTS playback element
-  const muteRef         = useRef(false); // true while TTS plays — suppresses mic echo
+  const muteRef             = useRef(false);       // true while TTS plays — cleared on barge-in
+  const greetingBlobRef     = useRef<Blob | null>(null); // pre-fetched greeting audio
+  const pendingTranscriptRef = useRef<string | null>(null); // transcript queued during thinking
 
   // Refs that give the WebSocket onmessage handler access to the latest React
   // state without stale-closure issues (onmessage is only assigned once).
@@ -154,27 +157,49 @@ const RightPanel: React.FC<{ agent: AgentConfig; calendarConnected: boolean | nu
   // ── cleanup: close WebSocket and mic when the component unmounts ───────────
   useEffect(() => { return () => { disconnectRealtime(); }; }, []);
 
+  // ── pre-fetch greeting TTS while idle so first word plays instantly ────────
+  // Fires whenever we return to idle (after a call ends and user resets).
+  useEffect(() => {
+    if (callState !== 'idle' || !calendarConnected) return;
+    const text = `Hello! Thank you for calling ${agent.name}. How can I help you today?`;
+    speakText(agent.id, text)
+      .then(blob => { greetingBlobRef.current = blob; })
+      .catch(() => { /* non-fatal — startCall falls back to a live TTS call */ });
+  }, [callState, calendarConnected]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // ── TTS: convert agent reply text to speech and play it ───────────────────
-  const speakReply = async (text: string) => {
+  // preloadedBlob skips the API call for the pre-fetched greeting.
+  // When the user barges in, the speech_started handler calls audio.pause(),
+  // which fires onpause → resolves the promise early.
+  const speakReply = async (text: string, preloadedBlob?: Blob) => {
     setVoiceState('agent_speaking');
-    muteRef.current = true; // suppress mic so TTS audio isn't looped back into VAD
+    muteRef.current = true;
     try {
-      const audioBlob = await speakText(agent.id, text);
+      const audioBlob = preloadedBlob ?? await speakText(agent.id, text);
       const url = URL.createObjectURL(audioBlob);
       const audio = new Audio(url);
       audioPlayerRef.current = audio;
       await new Promise<void>(resolve => {
         audio.onended = () => resolve();
-        audio.onerror = () => resolve(); // non-fatal; text reply is still visible
-        audio.play();
+        audio.onerror = () => resolve();
+        // Fires when barge-in handler calls audio.pause() mid-sentence.
+        audio.onpause = () => resolve();
+        // play() returns a Promise; if pause() was called before play() resolved
+        // (very fast barge-in) the browser rejects with AbortError — treat as done.
+        const p = audio.play();
+        if (p) p.catch(() => resolve());
       });
       URL.revokeObjectURL(url);
     } catch { /* TTS failure is non-fatal */ }
     finally {
+      // If the barge-in handler already cleared muteRef, don't override the
+      // 'user_speaking' voice state the handler already set.
+      const wasInterrupted = !muteRef.current;
       muteRef.current = false;
       audioPlayerRef.current = null;
-      // Return to listening only if the WebSocket is still connected.
-      if (wsRef.current?.readyState === WebSocket.OPEN) setVoiceState('listening');
+      if (!wasInterrupted && wsRef.current?.readyState === WebSocket.OPEN) {
+        setVoiceState('listening');
+      }
     }
   };
 
@@ -215,9 +240,20 @@ const RightPanel: React.FC<{ agent: AgentConfig; calendarConnected: boolean | nu
   // the latest version, even after multiple re-renders.
   const handleTranscript = async (transcript: string) => {
     if (!transcript.trim() || callStateRef.current !== 'active') return;
-    if (loadingRef.current) return; // agent already processing a turn — discard
+    if (loadingRef.current) {
+      // Agent is mid-think — queue this transcript (overwrite any older pending one)
+      // so it gets processed as soon as the current reply finishes.
+      pendingTranscriptRef.current = transcript;
+      return;
+    }
     const reply = await send(transcript);
     if (reply) await speakReply(reply);
+    // Drain one pending transcript (set during thinking or while agent was speaking)
+    const pending = pendingTranscriptRef.current;
+    if (pending && callStateRef.current === 'active') {
+      pendingTranscriptRef.current = null;
+      await handleTranscript(pending);
+    }
   };
   // Update the ref every render so onmessage always has the latest handler.
   transcriptHandlerRef.current = handleTranscript;
@@ -244,7 +280,10 @@ const RightPanel: React.FC<{ agent: AgentConfig; calendarConnected: boolean | nu
 
       let chunkCount = 0;
       processor.onaudioprocess = (e) => {
-        if (ws.readyState !== WebSocket.OPEN || muteRef.current) return;
+        if (ws.readyState !== WebSocket.OPEN) return;
+        // Always stream mic audio — echo cancellation (set in getUserMedia) prevents
+        // TTS speaker output from reaching the VAD.  Keeping the stream live during
+        // agent speech is what enables barge-in (speech_started fires → TTS paused).
         chunkCount++;
         // Log every 30 chunks (~5 s) so you can confirm audio is flowing in DevTools.
         if (chunkCount % 30 === 0) console.log(`[VAD] audio flowing — ${chunkCount} chunks sent`);
@@ -319,9 +358,18 @@ const RightPanel: React.FC<{ agent: AgentConfig; calendarConnected: boolean | nu
         console.log('[VAD] event:', msg.type, msg.type === 'conversation.item.input_audio_transcription.completed' ? `"${msg.transcript}"` : '');
         switch (msg.type) {
           case 'input_audio_buffer.speech_started':
-            if (!muteRef.current) setVoiceState('user_speaking');
+            // Barge-in: stop TTS immediately so the user's voice takes over.
+            // Clear muteRef FIRST so speech_stopped → 'thinking' works if the
+            // events arrive in the same tick.
+            if (muteRef.current) {
+              muteRef.current = false;
+              audioPlayerRef.current?.pause(); // onpause → resolves speakReply
+            }
+            setVoiceState('user_speaking');
             break;
           case 'input_audio_buffer.speech_stopped':
+            // Only switch to thinking when we're not mid-TTS (muteRef already
+            // cleared by barge-in above if that's what caused the stop).
             if (!muteRef.current) setVoiceState('thinking');
             break;
           case 'conversation.item.input_audio_transcription.completed':
@@ -372,21 +420,20 @@ const RightPanel: React.FC<{ agent: AgentConfig; calendarConnected: boolean | nu
 
     setElapsed(0);
     setCallState('active');
-    setLoading(true);
     const t = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    let greeting = `Hello! Thank you for calling ${agent.name}. How can I help you today?`;
-    try {
-      const data = await chatWithAgent(agent.id, 'Hello', []);
-      greeting = data.reply;
-    } catch { /* use fallback */ }
+    const greetingText = `Hello! Thank you for calling ${agent.name}. How can I help you today?`;
+    setMsgs([{ role: 'assistant', content: greetingText, t }]);
 
-    setMsgs([{ role: 'assistant', content: greeting, t }]);
-    setLoading(false);
-    await speakReply(greeting);   // agent speaks first
-    await connectRealtime();      // then open mic and start listening
+    // Start WebSocket BEFORE awaiting TTS so the mic is ready as soon as the
+    // greeting finishes.  If the blob was pre-fetched the greeting plays instantly,
+    // giving the WebSocket the full playback window to connect.
+    connectRealtime(); // intentionally non-awaited — runs in parallel
+    const cachedBlob = greetingBlobRef.current ?? undefined;
+    greetingBlobRef.current = null; // clear so next call triggers a fresh pre-fetch
+    await speakReply(greetingText, cachedBlob);
   };
 
-  // ── END CALL: stop audio, disconnect mic, save full transcript ─────────────
+  // ── END CALL: stop audio, disconnect mic, save transcript, then book ─────────
   const endCall = async () => {
     if (audioPlayerRef.current) { audioPlayerRef.current.pause(); audioPlayerRef.current = null; }
     disconnectRealtime();
@@ -396,23 +443,37 @@ const RightPanel: React.FC<{ agent: AgentConfig; calendarConnected: boolean | nu
     setSaveError(null);
 
     if (snapshot.length > 0) {
+      const flatMsgs = snapshot.map(m => ({ role: m.role, content: m.content }));
+
+      // Save transcript (blocking so the record exists before the page redirects)
       try {
-        await saveConversation(
-          agent.id,
-          snapshot.map(m => ({ role: m.role, content: m.content })),
-          elapsed,
-        );
+        await saveConversation(agent.id, flatMsgs, elapsed);
       } catch (err: unknown) {
         console.error('Failed to save conversation:', err);
         setSaveError(err instanceof Error ? err.message : String(err));
       }
+
+      // Post-call booking — non-blocking, runs in the background while the
+      // call-ended banner is shown so the user sees the result update in place.
+      setBookingStatus('pending');
+      bookFromTranscript(agent.id, flatMsgs)
+        .then(result => {
+          setBookingStatus(result.booked ? 'booked' : 'none');
+          if (result.booked) console.log('[booking] Appointment created:', result.event);
+          else console.log('[booking] No appointment booked:', result.error ?? '(no intent)');
+        })
+        .catch(err => {
+          console.error('[booking] book-from-transcript error:', err);
+          setBookingStatus('none');
+        });
     }
   };
 
   // ── RESET: back to idle ────────────────────────────────────────────────────
   const resetCall = () => {
     setMsgs([]); setElapsed(0); setCallState('idle');
-    setSaveError(null); setMicError(null); setVoiceState(null);
+    setSaveError(null); setMicError(null); setVoiceState(null); setBookingStatus(null);
+    pendingTranscriptRef.current = null;
   };
 
   // ── status line for the top bar subtitle ──────────────────────────────────
@@ -535,6 +596,13 @@ const RightPanel: React.FC<{ agent: AgentConfig; calendarConnected: boolean | nu
               <div style={{ fontSize: 12, color: 'var(--text-soft)', marginTop: 3 }}>
                 {formatDuration(elapsed)} · {userTurns} message{userTurns !== 1 ? 's' : ''} · {saveError ? 'Save failed' : 'Conversation saved'}
               </div>
+              {/* Post-call booking status */}
+              {bookingStatus === 'pending' && (
+                <div style={{ marginTop: 6, fontSize: 11, color: 'var(--text-soft)' }}>Booking appointment…</div>
+              )}
+              {bookingStatus === 'booked' && (
+                <div style={{ marginTop: 6, fontSize: 11, fontWeight: 600, color: 'var(--green)' }}>Appointment booked!</div>
+              )}
               {saveError && (
                 <div style={{ marginTop: 8, fontSize: 11, color: '#DC2626', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 6, padding: '6px 10px', textAlign: 'left', wordBreak: 'break-word' }}>
                   Error: {saveError}
