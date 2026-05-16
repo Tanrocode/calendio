@@ -325,7 +325,26 @@ class SchedulingAgent:
             })
             reply = result["output"]
             return {"reply": reply}
-        except Exception:
+        except Exception as exc:
+            # If the failure is a revoked/expired Google OAuth token, return a
+            # friendly message instead of crashing — the user just needs to
+            # reconnect their calendar from the dashboard.
+            try:
+                from google.auth.exceptions import RefreshError
+                _chain = exc
+                while _chain is not None:
+                    if isinstance(_chain, RefreshError):
+                        logger.warning("Google OAuth token expired/revoked — user must reconnect calendar.")
+                        return {
+                            "reply": (
+                                "I'm sorry, but my connection to Google Calendar has expired. "
+                                "The business owner needs to reconnect their calendar from the dashboard. "
+                                "Is there anything else I can help you with?"
+                            )
+                        }
+                    _chain = getattr(_chain, "__cause__", None) or getattr(_chain, "__context__", None)
+            except ImportError:
+                pass
             logger.exception("agent.invoke failed")
             raise
         finally:

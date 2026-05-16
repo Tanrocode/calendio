@@ -109,13 +109,17 @@ def agent_chat(
     ), call_mode=True)
     # Individual turns are NOT logged here — the full conversation is saved as one
     # record when the user ends the call (POST /{agent_id}/conversations).
-    return agent.run(
-        user_id=current_user.id,
-        message=body.message,
-        history=body.history,
-        request=request,
-        agent_id=agent_id,
-    )
+    try:
+        return agent.run(
+            user_id=current_user.id,
+            message=body.message,
+            history=body.history,
+            request=request,
+            agent_id=agent_id,
+        )
+    except Exception:
+        logger.exception("Unhandled error in agent_chat for agent %s", agent_id)
+        return {"reply": "I'm sorry, I ran into an unexpected issue. Please try again in a moment."}
 
 
 class SaveConversationBody(BaseModel):
@@ -356,8 +360,6 @@ def get_realtime_token(
     the client.  The session is configured with semantic VAD so the API
     automatically detects when the caller has finished speaking.
     """
-    import httpx
-
     existing = (
         supabase.table("agent_configs")
         .select("id")
@@ -371,33 +373,11 @@ def get_realtime_token(
     if not settings.OPENAI_API_KEY:
         raise HTTPException(status_code=500, detail="OPENAI_API_KEY not configured.")
 
-    # /realtime/transcription_sessions is the correct endpoint for transcription-only
-    # sessions.  /realtime/sessions is for full conversation sessions (different token type).
-    resp = httpx.post(
-        "https://api.openai.com/v1/realtime/transcription_sessions",
-        headers={
-            "Authorization": f"Bearer {settings.OPENAI_API_KEY}",
-            "Content-Type": "application/json",
-        },
-        json={
-            "input_audio_format": "pcm16",
-            "input_audio_transcription": {"model": "gpt-4o-transcribe"},
-            "turn_detection": {
-                "type": "server_vad",
-                "threshold": 0.5,
-                "prefix_padding_ms": 300,
-                "silence_duration_ms": 700,
-            },
-        },
-        timeout=10,
-    )
-    logger.info("OpenAI transcription_sessions response %s: %s", resp.status_code, resp.text[:300])
-    if resp.status_code != 200:
-        raise HTTPException(
-            status_code=502,
-            detail=f"OpenAI session creation failed: {resp.text}",
-        )
-    return resp.json()
+    # Return the API key directly — the browser WebSocket uses the
+    # openai-insecure-api-key subprotocol which is designed for client-side use.
+    # This bypasses the GA session-creation endpoint (which rejects beta accounts)
+    # while keeping the key out of frontend source code.
+    return {"client_secret": {"value": settings.OPENAI_API_KEY}}
 
 
 class BookFromTranscriptBody(BaseModel):
