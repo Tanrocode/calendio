@@ -1,12 +1,18 @@
+import json
+import logging
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile
 from pydantic import BaseModel
 
+from ..config import settings
 from ..supabase_auth import CurrentUser, get_current_user
 from ..supabase_client import supabase
 
 router = APIRouter(prefix="/agents", tags=["agents"])
+
+logger = logging.getLogger("uvicorn.error")
 
 
 class AgentCreate(BaseModel):
@@ -14,6 +20,17 @@ class AgentCreate(BaseModel):
     services: Optional[str] = None
     business_hours: Optional[str] = None
     agent_instructions: Optional[str] = None
+    context: Optional[str] = None
+
+
+class AgentUpdate(BaseModel):
+    # All fields optional — only supplied fields are written to DB
+    name: Optional[str] = None
+    services: Optional[str] = None
+    business_hours: Optional[str] = None
+    agent_instructions: Optional[str] = None
+    context: Optional[str] = None
+    is_active: Optional[bool] = None
 
 
 @router.get("")
@@ -88,7 +105,10 @@ def agent_chat(
         services=config_data.get("services"),
         business_hours=config_data.get("business_hours"),
         agent_instructions=config_data.get("agent_instructions"),
-    ))
+        context=config_data.get("context"),
+    ), call_mode=True)
+    # Individual turns are NOT logged here — the full conversation is saved as one
+    # record when the user ends the call (POST /{agent_id}/conversations).
     return agent.run(
         user_id=current_user.id,
         message=body.message,
@@ -96,6 +116,357 @@ def agent_chat(
         request=request,
         agent_id=agent_id,
     )
+
+
+class SaveConversationBody(BaseModel):
+    # Full transcript — list of {role: "user"|"assistant", content: "..."}
+    messages: List[Dict[str, str]]
+    elapsed_seconds: int = 0
+
+
+@router.post("/{agent_id}/conversations")
+def save_conversation(
+    agent_id: int,
+    body: SaveConversationBody,
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    """Save a complete conversation session when the user ends the call."""
+    user_turns = sum(1 for m in body.messages if m.get("role") == "user")
+
+    ended_at = datetime.utcnow()
+    started_at = ended_at - timedelta(seconds=body.elapsed_seconds)
+
+    # Build a readable summary: first user message truncated
+    first_user = next((m["content"] for m in body.messages if m.get("role") == "user"), None)
+    summary_text = first_user[:200] if first_user else f"{user_turns} message{'s' if user_turns != 1 else ''} exchanged"
+
+    supabase.table("conversations").insert({
+        "agent_id": agent_id,
+        "user_id": current_user.id,
+        "summary": summary_text,
+        "started_at": started_at.isoformat(),
+        "ended_at": ended_at.isoformat(),
+    }).execute()
+
+    # Increment conversation count in metrics
+    try:
+        metric = supabase.table("metrics").select("*").eq("user_id", current_user.id).execute()
+        if metric.data:
+            supabase.table("metrics").update({
+                "total_conversations": metric.data[0]["total_conversations"] + 1,
+            }).eq("user_id", current_user.id).execute()
+        else:
+            supabase.table("metrics").insert({
+                "agent_id": agent_id,
+                "user_id": current_user.id,
+                "total_conversations": 1,
+                "total_appointments_created": 0,
+            }).execute()
+    except Exception as exc:
+        logger.warning("Failed to update metrics after conversation save: %s", exc)
+
+    return {"saved": True, "turns": user_turns}
+
+
+@router.patch("/{agent_id}")
+def update_agent(
+    agent_id: int,
+    body: AgentUpdate,
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    # Verify agent belongs to this user
+    existing = (
+        supabase.table("agent_configs")
+        .select("id")
+        .eq("id", agent_id)
+        .eq("user_id", current_user.id)
+        .execute()
+    )
+    if not existing.data:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    # Only update fields that were explicitly included in the request body
+    updates = body.model_dump(exclude_unset=True)
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    result = (
+        supabase.table("agent_configs")
+        .update(updates)
+        .eq("id", agent_id)
+        .execute()
+    )
+    return result.data[0]
+
+
+PDF_PAGE_LIMIT = 6
+
+
+@router.post("/{agent_id}/upload-context")
+def upload_context_pdf(
+    agent_id: int,
+    file: UploadFile = File(...),
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    """Extract text from a PDF (max 6 pages) and save it as the agent's context."""
+    import io
+    try:
+        import pdfplumber
+    except ImportError:
+        raise HTTPException(status_code=500, detail="pdfplumber is not installed on the server.")
+
+    if not file.filename or not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Only PDF files are accepted.")
+
+    # Verify agent belongs to this user
+    existing = (
+        supabase.table("agent_configs")
+        .select("id")
+        .eq("id", agent_id)
+        .eq("user_id", current_user.id)
+        .execute()
+    )
+    if not existing.data:
+        raise HTTPException(status_code=404, detail="Agent not found.")
+
+    raw = file.file.read()
+    with pdfplumber.open(io.BytesIO(raw)) as pdf:
+        page_count = len(pdf.pages)
+        if page_count > PDF_PAGE_LIMIT:
+            raise HTTPException(
+                status_code=400,
+                detail=f"PDF has {page_count} pages — limit is {PDF_PAGE_LIMIT}. Please upload a shorter document.",
+            )
+        text_parts = []
+        for page in pdf.pages:
+            page_text = page.extract_text()
+            if page_text:
+                text_parts.append(page_text.strip())
+
+    extracted = "\n\n".join(text_parts).strip()
+    if not extracted:
+        raise HTTPException(status_code=400, detail="Could not extract any text from the PDF.")
+
+    result = (
+        supabase.table("agent_configs")
+        .update({"context": extracted})
+        .eq("id", agent_id)
+        .execute()
+    )
+    return {"extracted_chars": len(extracted), "pages": page_count, "context": extracted}
+
+
+# ── VOICE: SPEECH-TO-TEXT ────────────────────────────────────────────────────
+
+@router.post("/{agent_id}/transcribe")
+def transcribe_audio(
+    agent_id: int,
+    file: UploadFile = File(...),
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    """
+    Receive a voice recording from the browser (webm/opus from MediaRecorder),
+    send it to OpenAI Whisper (gpt-4o-transcribe), and return the transcribed text.
+    The frontend then sends that text through the normal chat endpoint.
+    """
+    import io
+    from openai import OpenAI as _OpenAI
+
+    # Reject requests for agents that don't belong to this user
+    existing = (
+        supabase.table("agent_configs")
+        .select("id")
+        .eq("id", agent_id)
+        .eq("user_id", current_user.id)
+        .execute()
+    )
+    if not existing.data:
+        raise HTTPException(status_code=404, detail="Agent not found.")
+
+    if not settings.OPENAI_API_KEY:
+        raise HTTPException(status_code=500, detail="OPENAI_API_KEY is not configured.")
+
+    raw = file.file.read()
+    # Use the original filename so OpenAI knows the codec; fall back to .webm
+    filename = file.filename or "recording.webm"
+    content_type = file.content_type or "audio/webm"
+
+    client = _OpenAI(api_key=settings.OPENAI_API_KEY)
+    transcription = client.audio.transcriptions.create(
+        model="gpt-4o-transcribe",
+        file=(filename, io.BytesIO(raw), content_type),
+    )
+    return {"text": transcription.text}
+
+
+# ── VOICE: TEXT-TO-SPEECH ────────────────────────────────────────────────────
+
+class SpeakBody(BaseModel):
+    text: str
+    voice: str = "nova"    # default: bright, energetic voice — fits salon/restaurant staff
+    speed: float = 1.15    # slightly faster than default for a natural cashier cadence
+
+
+@router.post("/{agent_id}/speak")
+def speak_text(
+    agent_id: int,
+    body: SpeakBody,
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    """
+    Convert the agent's text reply to speech using OpenAI TTS (gpt-4o-mini-tts)
+    and stream back raw MP3 bytes.  The frontend creates a blob URL and plays it
+    with an <audio> element, giving the agent its voice.
+    """
+    from openai import OpenAI as _OpenAI
+
+    existing = (
+        supabase.table("agent_configs")
+        .select("id")
+        .eq("id", agent_id)
+        .eq("user_id", current_user.id)
+        .execute()
+    )
+    if not existing.data:
+        raise HTTPException(status_code=404, detail="Agent not found.")
+
+    if not settings.OPENAI_API_KEY:
+        raise HTTPException(status_code=500, detail="OPENAI_API_KEY is not configured.")
+
+    client = _OpenAI(api_key=settings.OPENAI_API_KEY)
+    # gpt-4o-mini-tts is the fastest high-quality TTS model; mp3 works in all browsers
+    tts_response = client.audio.speech.create(
+        model="gpt-4o-mini-tts",
+        voice=body.voice,
+        input=body.text,
+        response_format="mp3",
+        speed=body.speed,
+    )
+    return Response(content=tts_response.content, media_type="audio/mpeg")
+
+
+@router.get("/{agent_id}/realtime-token")
+def get_realtime_token(
+    agent_id: int,
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    """
+    Create a short-lived OpenAI Realtime API ephemeral token so the browser
+    can open a transcription WebSocket directly — no API key ever reaches
+    the client.  The session is configured with semantic VAD so the API
+    automatically detects when the caller has finished speaking.
+    """
+    import httpx
+
+    existing = (
+        supabase.table("agent_configs")
+        .select("id")
+        .eq("id", agent_id)
+        .eq("user_id", current_user.id)
+        .execute()
+    )
+    if not existing.data:
+        raise HTTPException(status_code=404, detail="Agent not found.")
+
+    if not settings.OPENAI_API_KEY:
+        raise HTTPException(status_code=500, detail="OPENAI_API_KEY not configured.")
+
+    # /realtime/transcription_sessions is the correct endpoint for transcription-only
+    # sessions.  /realtime/sessions is for full conversation sessions (different token type).
+    resp = httpx.post(
+        "https://api.openai.com/v1/realtime/transcription_sessions",
+        headers={
+            "Authorization": f"Bearer {settings.OPENAI_API_KEY}",
+            "Content-Type": "application/json",
+        },
+        json={
+            "input_audio_format": "pcm16",
+            "input_audio_transcription": {"model": "gpt-4o-transcribe"},
+            "turn_detection": {
+                "type": "server_vad",
+                "threshold": 0.5,
+                "prefix_padding_ms": 300,
+                "silence_duration_ms": 700,
+            },
+        },
+        timeout=10,
+    )
+    logger.info("OpenAI transcription_sessions response %s: %s", resp.status_code, resp.text[:300])
+    if resp.status_code != 200:
+        raise HTTPException(
+            status_code=502,
+            detail=f"OpenAI session creation failed: {resp.text}",
+        )
+    return resp.json()
+
+
+class BookFromTranscriptBody(BaseModel):
+    messages: List[Dict[str, Any]]
+
+
+@router.post("/{agent_id}/book-from-transcript")
+def book_from_transcript(
+    agent_id: int,
+    body: BookFromTranscriptBody,
+    request: Request,
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    """
+    Called after a voice call ends.  Parse the full transcript with an LLM,
+    extract any booking intent, and create the Google Calendar appointment.
+    """
+    from ..agents.scheduling_agent import extract_and_book
+
+    result = (
+        supabase.table("agent_configs")
+        .select("*")
+        .eq("id", agent_id)
+        .eq("user_id", current_user.id)
+        .execute()
+    )
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    if "token" not in request.session:
+        return {"booked": False, "error": "Google Calendar not connected"}
+
+    config_data = result.data[0]
+    booking = extract_and_book(
+        agent_config=AgentCreate(
+            name=config_data["name"],
+            services=config_data.get("services"),
+            business_hours=config_data.get("business_hours"),
+            agent_instructions=config_data.get("agent_instructions"),
+            context=config_data.get("context"),
+        ),
+        messages=body.messages,
+        user_id=current_user.id,
+        agent_id=agent_id,
+        oauth_session={
+            "token":         request.session.get("token"),
+            "refresh_token": request.session.get("refresh_token"),
+        },
+    )
+
+    # Write the outcome back to the most recent conversation row for this agent.
+    # This is what the Recent Activity feed reads to show the outcome badge.
+    outcome = booking.get("outcome") or ("Booked" if booking.get("booked") else "No result")
+    try:
+        latest = (
+            supabase.table("conversations")
+            .select("id")
+            .eq("user_id", current_user.id)
+            .eq("agent_id", agent_id)
+            .order("ended_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        if latest.data:
+            supabase.table("conversations").update({"outcome": outcome}).eq("id", latest.data[0]["id"]).execute()
+    except Exception as exc:
+        logger.warning("Failed to update conversation outcome: %s", exc)
+
+    return booking
 
 
 @router.delete("/{agent_id}")

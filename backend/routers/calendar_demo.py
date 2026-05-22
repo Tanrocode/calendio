@@ -4,25 +4,64 @@ HTTP demo for Google Calendar operations that mirror the LangChain tools in
 
 Flow: user must be logged into the app (Supabase) and then connect Google from this page;
 requests here send `Cookie` via `credentials: 'include'` through the Vite proxy.
+
+Token fallback: if the session cookie is missing (browser closed, server restarted, etc.)
+but the request carries a Supabase Bearer token, we reload Google credentials from the
+`users` table (google_access_token / google_refresh_token columns) and restore the session.
 """
 
 from __future__ import annotations
 
+import logging
+import os
 from contextlib import contextmanager
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, HTTPException, Query, Request
+from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from pydantic import BaseModel, Field
 
 from ..agents import scheduling_agent as sa
+from ..supabase_client import supabase
 from .auth import _build_credentials
 
 router = APIRouter(prefix="/calendar-demo", tags=["calendar-demo"])
 
+logger = logging.getLogger("uvicorn.error")
+
 # Same defaults as `SchedulingAgent.run` until you load per-user settings from DB.
 _DEFAULT_CAL = "primary"
 _DEFAULT_TZ = "America/Los_Angeles"
+
+
+def _try_restore_session_from_db(request: Request) -> bool:
+    """If the session is empty but the request has a Supabase JWT, load the stored
+    Google tokens from the users table and write them back into the session.
+    Returns True if tokens were successfully restored."""
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        return False
+    try:
+        from ..supabase_auth import get_user_from_token
+        user = get_user_from_token(auth_header[7:])
+        row = (
+            supabase.table("users")
+            .select("google_access_token, google_refresh_token")
+            .eq("id", user.id)
+            .execute()
+        )
+        if not row.data or not row.data[0].get("google_refresh_token"):
+            return False
+        # Write the stored tokens back into the session cookie for this request
+        request.session["token"] = row.data[0].get("google_access_token") or ""
+        request.session["refresh_token"] = row.data[0]["google_refresh_token"]
+        return True
+    except Exception as exc:
+        logger.warning("Could not restore Google session from DB: %s", exc)
+        return False
 
 
 @contextmanager
@@ -30,11 +69,17 @@ def _google_tool_context(request: Request):
     """
     LangChain tools read Google tokens from ContextVars (not from Request directly).
     This block mirrors `SchedulingAgent.run`: set vars for the duration of one HTTP handler.
+
+    Falls back to stored DB credentials when the session cookie is missing.
     """
+    # Restore session from Supabase if the cookie is gone but JWT is present
+    if "token" not in request.session:
+        _try_restore_session_from_db(request)
+
     if "token" not in request.session:
         raise HTTPException(
             status_code=401,
-            detail="No Google Calendar session. Use “Connect Google Calendar” first.",
+            detail="No Google Calendar session. Use 'Connect Google Calendar' first.",
         )
     oauth_tok = sa._OAUTH_SESSION_CTX.set(
         {
@@ -54,8 +99,46 @@ def _google_tool_context(request: Request):
 
 @router.get("/status")
 def calendar_status(request: Request) -> Dict[str, Any]:
-    """Whether the browser session has Google OAuth tokens (after successful connect)."""
-    return {"connected": "token" in request.session}
+    """Connected = session cookie exists OR stored DB tokens exist for this user."""
+    if "token" in request.session:
+        return {"connected": True}
+    # Try to find stored tokens in DB without fully restoring the session yet
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        try:
+            from ..supabase_auth import get_user_from_token
+            user = get_user_from_token(auth_header[7:])
+            row = (
+                supabase.table("users")
+                .select("google_refresh_token")
+                .eq("id", user.id)
+                .execute()
+            )
+            if row.data and row.data[0].get("google_refresh_token"):
+                return {"connected": True}
+        except Exception:
+            pass
+    return {"connected": False}
+
+@router.get("/upcoming-events")
+def get_upcoming_appointments(
+    request: Request,
+    hours_ahead: int = 24,
+    max_results: int = 25,
+) -> List[Dict[str, Any]]:
+    """
+    Get upcoming appointments starting from now up to N hours ahead.
+    """
+    with _google_tool_context(request):
+        now = datetime.now(ZoneInfo(_DEFAULT_TZ))
+        future = now + timedelta(hours=hours_ahead)
+
+        return sa._list_events_impl(
+            time_min=now.isoformat(),
+            time_max=future.isoformat(),
+            text_query=None,
+            max_results=max_results,
+        )
 
 
 @router.get("/events")
