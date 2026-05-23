@@ -21,6 +21,7 @@ class AgentCreate(BaseModel):
     business_hours: Optional[str] = None
     agent_instructions: Optional[str] = None
     context: Optional[str] = None
+    agentphone_number: Optional[str] = None
 
 
 class AgentUpdate(BaseModel):
@@ -31,6 +32,7 @@ class AgentUpdate(BaseModel):
     agent_instructions: Optional[str] = None
     context: Optional[str] = None
     is_active: Optional[bool] = None
+    agentphone_number: Optional[str] = None
 
 
 @router.get("")

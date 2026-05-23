@@ -740,7 +740,7 @@ const AgentPage: React.FC = () => {
 
   // Edit mode — allows updating name, services, hours, instructions, context inline
   const [editMode, setEditMode] = useState(false);
-  const [editForm, setEditForm] = useState({ name: '', services: '', business_hours: '', agent_instructions: '', context: '' });
+  const [editForm, setEditForm] = useState({ name: '', services: '', business_hours: '', agent_instructions: '', context: '', agentphone_number: '' });
   const [editSaving, setEditSaving] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
 
@@ -782,6 +782,7 @@ const AgentPage: React.FC = () => {
       business_hours: agent.business_hours ?? '',
       agent_instructions: agent.agent_instructions ?? '',
       context: agent.context ?? '',
+      agentphone_number: agent.agentphone_number ?? '',
     });
     setEditError(null);
     setEditMode(true);
@@ -801,6 +802,8 @@ const AgentPage: React.FC = () => {
         business_hours: editForm.business_hours || undefined,
         agent_instructions: editForm.agent_instructions || undefined,
         context: editForm.context || undefined,
+        // Send null when cleared so the DB column is wiped (not just left as the prior value)
+        agentphone_number: editForm.agentphone_number.trim() || null,
       });
       setAgent(updated);
       setEditMode(false);
@@ -1081,6 +1084,43 @@ const AgentPage: React.FC = () => {
                   <button onClick={handleConnectCalendar} disabled={calendarLoading} style={{ fontSize: 11, fontWeight: 600, color: 'var(--plum-mid)', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'var(--font-ui)' }}>
                     {calendarLoading ? 'Connecting…' : 'Connect'}
                   </button>
+                )}
+              </div>
+
+              {/* AgentPhone — assign your one shared number to whichever agent should answer */}
+              <div style={{ padding: '8px 0' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: editMode ? 8 : 0 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, fontWeight: 500, color: 'var(--text-dark)' }}>
+                    <div style={{ width: 22, height: 22, borderRadius: 6, border: '1px solid var(--border)', background: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11 }}>
+                      ☎
+                    </div>
+                    AgentPhone
+                  </div>
+                  {!editMode && (
+                    agent.agentphone_number ? (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, fontWeight: 600, color: 'var(--green)' }}>
+                        <div style={{ width: 5, height: 5, background: 'var(--green)', borderRadius: '50%' }} />
+                        {agent.agentphone_number}
+                      </div>
+                    ) : (
+                      <div style={{ fontSize: 11, color: 'var(--text-soft)', fontStyle: 'italic' }}>Not assigned</div>
+                    )
+                  )}
+                </div>
+                {editMode && (
+                  <>
+                    <input
+                      value={editForm.agentphone_number}
+                      onChange={e => setEditForm(f => ({ ...f, agentphone_number: e.target.value }))}
+                      placeholder="+15393287802"
+                      style={fieldInputStyle}
+                      onFocus={e => (e.target.style.borderColor = 'var(--plum-xlight)')}
+                      onBlur={e => (e.target.style.borderColor = 'var(--lavender-dark)')}
+                    />
+                    <div style={{ fontSize: 10, color: 'var(--text-soft)', marginTop: 4, lineHeight: 1.4 }}>
+                      Paste your AgentPhone number (E.164 format). Only one agent should hold this at a time — inbound calls route to whoever has it.
+                    </div>
+                  </>
                 )}
               </div>
             </div>

@@ -33,6 +33,7 @@ export type AgentConfig = {
   context: string | null;
   is_active: boolean;
   created_at: string | null;
+  agentphone_number: string | null;
 };
 
 let agentsCache: AgentConfig[] | null = null;
@@ -132,6 +133,7 @@ export const updateAgent = async (
     agent_instructions?: string;
     context?: string;
     is_active?: boolean;
+    agentphone_number?: string | null;
   }
 ): Promise<AgentConfig> => {
   const headers = await getAuthHeaders();

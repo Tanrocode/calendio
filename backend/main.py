@@ -3,14 +3,16 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-load_dotenv(Path(__file__).resolve().parent / '.env')
+# override=True so an updated .env value (e.g. rotated webhook secret) replaces
+# whatever was loaded on the previous worker boot rather than being ignored.
+load_dotenv(Path(__file__).resolve().parent / '.env', override=True)
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 from starlette.middleware.sessions import SessionMiddleware
 
-from .routers import auth, calendar_demo, dashboard, log_agent, agent_config
+from .routers import agentphone, auth, calendar_demo, dashboard, log_agent, agent_config
 
 _secret = os.getenv('FLASK_SECRET_KEY')
 if not _secret:
@@ -42,6 +44,7 @@ app.include_router(log_agent.router)
 app.include_router(auth.router)
 app.include_router(calendar_demo.router)
 app.include_router(agent_config.router)
+app.include_router(agentphone.router)
 
 
 @app.get("/")

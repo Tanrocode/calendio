@@ -1,9 +1,26 @@
 from dataclasses import dataclass
 
+import httpx
 from fastapi import Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from .supabase_client import supabase
+
+
+def _supabase_execute(fn):
+    """Run a supabase-py query, retrying once on stale HTTP/2 connection errors.
+
+    When an H2 connection idles out the server closes it, but the httpcore pool
+    still considers it live.  The first attempt fails with RemoteProtocolError;
+    httpcore then drops the bad connection so the retry gets a fresh one.
+    """
+    for attempt in range(2):
+        try:
+            return fn()
+        except httpx.RemoteProtocolError:
+            if attempt == 0:
+                continue
+            raise
 
 _bearer = HTTPBearer()
 
@@ -16,11 +33,15 @@ def get_user_from_token(token: str) -> "CurrentUser":
         raise HTTPException(status_code=401, detail="Not authenticated")
     supabase_uid = response.user.id
     email = response.user.email or ""
-    result = supabase.table("users").select("*").eq("supabase_uid", supabase_uid).execute()
+    result = _supabase_execute(
+        lambda: supabase.table("users").select("*").eq("supabase_uid", supabase_uid).execute()
+    )
     if result.data:
         row = result.data[0]
         return CurrentUser(id=row["id"], supabase_uid=row["supabase_uid"], email=row["email"])
-    insert = supabase.table("users").insert({"supabase_uid": supabase_uid, "email": email}).execute()
+    insert = _supabase_execute(
+        lambda: supabase.table("users").insert({"supabase_uid": supabase_uid, "email": email}).execute()
+    )
     row = insert.data[0]
     return CurrentUser(id=row["id"], supabase_uid=row["supabase_uid"], email=row["email"])
 
@@ -48,13 +69,17 @@ def get_current_user(payload: dict = Depends(_verify_jwt)) -> CurrentUser:
     supabase_uid: str = payload["sub"]
     email: str = payload.get("email", "")
 
-    result = supabase.table("users").select("*").eq("supabase_uid", supabase_uid).execute()
+    result = _supabase_execute(
+        lambda: supabase.table("users").select("*").eq("supabase_uid", supabase_uid).execute()
+    )
 
     if result.data:
         row = result.data[0]
         return CurrentUser(id=row["id"], supabase_uid=row["supabase_uid"], email=row["email"])
 
     # First login — create user row
-    insert = supabase.table("users").insert({"supabase_uid": supabase_uid, "email": email}).execute()
+    insert = _supabase_execute(
+        lambda: supabase.table("users").insert({"supabase_uid": supabase_uid, "email": email}).execute()
+    )
     row = insert.data[0]
     return CurrentUser(id=row["id"], supabase_uid=row["supabase_uid"], email=row["email"])
