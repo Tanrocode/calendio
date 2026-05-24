@@ -335,8 +335,8 @@ const CalendarDemo: React.FC = () => {
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const [{ time_min, time_max }, setRange] = useState(defaultRange);
-  const [searchQ, setSearchQ] = useState('');
+  const [{ time_min, time_max }, _setRange] = useState(defaultRange);
+  const [searchQ, _setSearchQ] = useState('');
   const [events, setEvents] = useState<CalendarEventRow[]>([]);
   const [rbcEvents, setRbcEvents] = useState<RbcEvent[]>([]);
   const [currentDate, setCurrentDate] = useState(new Date());
@@ -564,14 +564,14 @@ const CalendarDemo: React.FC = () => {
               date={currentDate}
               view={currentView as any}
               onNavigate={setCurrentDate}
-              onView={v => setCurrentView(v)}
+              onView={(v: string) => setCurrentView(v)}
               selectable={!!connected}
               onSelectSlot={onSelectSlot}
               onSelectEvent={onSelectEvent}
               eventPropGetter={eventStyleGetter}
               style={{ flex: 1 }}
               popup
-              tooltipAccessor={e => e.title}
+              tooltipAccessor={(e: RbcEvent) => e.title}
             />
           </div>
 
