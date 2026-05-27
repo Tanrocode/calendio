@@ -23,5 +23,7 @@ class Settings:
     GOOGLE_CLIENT_SECRET: str = os.getenv("GOOGLE_CLIENT_SECRET", "")
     SUPABASE_URL: str = os.getenv("SUPABASE_URL", "")
     SUPABASE_SERVICE_ROLE_KEY: str = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+    AGENTPHONE_WEBHOOK_SECRET: str = os.getenv("AGENTPHONE_WEBHOOK_SECRET", "")
+    AGENTPHONE_API_KEY: str = os.getenv("AGENTPHONE_API_KEY", "")
 
 settings = Settings()

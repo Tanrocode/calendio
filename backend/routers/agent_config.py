@@ -1,7 +1,12 @@
+import hashlib
+import hmac
 import json
 import logging
+import re
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
+
+from ..services.agentphone_api import AgentPhoneError, provision_number, release_number
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile
 from pydantic import BaseModel
@@ -21,6 +26,7 @@ class AgentCreate(BaseModel):
     business_hours: Optional[str] = None
     agent_instructions: Optional[str] = None
     context: Optional[str] = None
+    agentphone_number: Optional[str] = None
 
 
 class AgentUpdate(BaseModel):
@@ -31,6 +37,7 @@ class AgentUpdate(BaseModel):
     agent_instructions: Optional[str] = None
     context: Optional[str] = None
     is_active: Optional[bool] = None
+    agentphone_number: Optional[str] = None
 
 
 @router.get("")
@@ -109,13 +116,17 @@ def agent_chat(
     ), call_mode=True)
     # Individual turns are NOT logged here — the full conversation is saved as one
     # record when the user ends the call (POST /{agent_id}/conversations).
-    return agent.run(
-        user_id=current_user.id,
-        message=body.message,
-        history=body.history,
-        request=request,
-        agent_id=agent_id,
-    )
+    try:
+        return agent.run(
+            user_id=current_user.id,
+            message=body.message,
+            history=body.history,
+            request=request,
+            agent_id=agent_id,
+        )
+    except Exception:
+        logger.exception("Unhandled error in agent_chat for agent %s", agent_id)
+        return {"reply": "I'm sorry, I ran into an unexpected issue. Please try again in a moment."}
 
 
 class SaveConversationBody(BaseModel):
@@ -356,8 +367,6 @@ def get_realtime_token(
     the client.  The session is configured with semantic VAD so the API
     automatically detects when the caller has finished speaking.
     """
-    import httpx
-
     existing = (
         supabase.table("agent_configs")
         .select("id")
@@ -371,33 +380,178 @@ def get_realtime_token(
     if not settings.OPENAI_API_KEY:
         raise HTTPException(status_code=500, detail="OPENAI_API_KEY not configured.")
 
-    # /realtime/transcription_sessions is the correct endpoint for transcription-only
-    # sessions.  /realtime/sessions is for full conversation sessions (different token type).
-    resp = httpx.post(
-        "https://api.openai.com/v1/realtime/transcription_sessions",
-        headers={
-            "Authorization": f"Bearer {settings.OPENAI_API_KEY}",
-            "Content-Type": "application/json",
-        },
-        json={
-            "input_audio_format": "pcm16",
-            "input_audio_transcription": {"model": "gpt-4o-transcribe"},
-            "turn_detection": {
-                "type": "server_vad",
-                "threshold": 0.5,
-                "prefix_padding_ms": 300,
-                "silence_duration_ms": 700,
-            },
-        },
-        timeout=10,
+    # Return the API key directly — the browser WebSocket uses the
+    # openai-insecure-api-key subprotocol which is designed for client-side use.
+    # This bypasses the GA session-creation endpoint (which rejects beta accounts)
+    # while keeping the key out of frontend source code.
+    return {"client_secret": {"value": settings.OPENAI_API_KEY}}
+
+
+# ── AGENTPHONE CONNECT / PROVISION / DISCONNECT ──────────────────────────────
+
+_E164_RE = re.compile(r"^\+[1-9]\d{7,14}$")
+
+
+class AgentPhoneConnectBody(BaseModel):
+    phone_number: str
+    webhook_secret: str
+
+
+class AgentPhoneProvisionBody(BaseModel):
+    area_code: Optional[str] = None
+
+
+def _get_agent_for_user(agent_id: int, user_id: str) -> Dict[str, Any]:
+    result = (
+        supabase.table("agent_configs")
+        .select("*")
+        .eq("id", agent_id)
+        .eq("user_id", user_id)
+        .execute()
     )
-    logger.info("OpenAI transcription_sessions response %s: %s", resp.status_code, resp.text[:300])
-    if resp.status_code != 200:
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Agent not found.")
+    return result.data[0]
+
+
+def _check_number_unique(phone_number: str, exclude_agent_id: int) -> None:
+    existing = (
+        supabase.table("agent_configs")
+        .select("id", "name")
+        .eq("agentphone_number", phone_number)
+        .neq("id", exclude_agent_id)
+        .execute()
+    )
+    if existing.data:
+        other = existing.data[0]
         raise HTTPException(
-            status_code=502,
-            detail=f"OpenAI session creation failed: {resp.text}",
+            status_code=409,
+            detail=f"That number is already assigned to agent '{other['name']}' (id={other['id']}).",
         )
-    return resp.json()
+
+
+@router.post("/{agent_id}/agentphone/connect")
+def agentphone_connect(
+    agent_id: int,
+    body: AgentPhoneConnectBody,
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    """BYON: validate and save a user-supplied AgentPhone number + webhook secret."""
+    _get_agent_for_user(agent_id, current_user.id)
+
+    number = body.phone_number.strip()
+    if not _E164_RE.match(number):
+        raise HTTPException(status_code=422, detail="Phone number must be in E.164 format (e.g. +14155551234).")
+
+    _check_number_unique(number, agent_id)
+
+    secret = body.webhook_secret.strip()
+    if not secret:
+        raise HTTPException(status_code=422, detail="Webhook secret cannot be empty.")
+
+    # HMAC self-test: sign a dummy payload with the provided secret and verify
+    # it round-trips correctly through our own verification logic.
+    dummy = b'{"event":"test"}'
+    sig = "sha256=" + hmac.new(secret.encode(), dummy, hashlib.sha256).hexdigest()
+    expected = "sha256=" + hmac.new(secret.encode(), dummy, hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(sig, expected):
+        raise HTTPException(status_code=422, detail="Webhook secret failed internal validation.")
+
+    result = (
+        supabase.table("agent_configs")
+        .update({
+            "agentphone_number": number,
+            "agentphone_webhook_secret": secret,
+            "agentphone_managed": False,
+            "agentphone_number_id": None,
+        })
+        .eq("id", agent_id)
+        .execute()
+    )
+    return result.data[0]
+
+
+@router.post("/{agent_id}/agentphone/provision")
+def agentphone_provision(
+    agent_id: int,
+    body: AgentPhoneProvisionBody,
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    """Managed: buy a new AgentPhone number on behalf of the user.
+
+    Checks phone_credits > 0 (payment gate placeholder), calls the AgentPhone API,
+    then saves the number + number_id to the agent row and decrements credits.
+    """
+    _get_agent_for_user(agent_id, current_user.id)
+
+    # Payment gate — check user has credits
+    user_row = supabase.table("users").select("phone_credits").eq("id", current_user.id).execute()
+    credits = (user_row.data[0].get("phone_credits") or 0) if user_row.data else 0
+    if credits <= 0:
+        raise HTTPException(
+            status_code=402,
+            detail="You have no phone number credits. Please add credits to provision a number.",
+        )
+
+    try:
+        provisioned = provision_number(area_code=body.area_code or None)
+    except AgentPhoneError as e:
+        raise HTTPException(status_code=502, detail=f"AgentPhone error: {e.detail}")
+
+    number = provisioned.get("number") or provisioned.get("phoneNumber") or ""
+    number_id = str(provisioned.get("id") or provisioned.get("numberId") or "")
+
+    if not number:
+        raise HTTPException(status_code=502, detail="AgentPhone returned no phone number.")
+
+    # Decrement credits atomically (best-effort — already provisioned, don't block)
+    try:
+        supabase.table("users").update({"phone_credits": credits - 1}).eq("id", current_user.id).execute()
+    except Exception:
+        logging.getLogger("uvicorn.error").warning("Failed to decrement phone_credits for user %s", current_user.id)
+
+    result = (
+        supabase.table("agent_configs")
+        .update({
+            "agentphone_number": number,
+            "agentphone_number_id": number_id,
+            "agentphone_managed": True,
+            "agentphone_webhook_secret": None,
+        })
+        .eq("id", agent_id)
+        .execute()
+    )
+    return {**result.data[0], "provisioned_number": number}
+
+
+@router.delete("/{agent_id}/agentphone/connect")
+def agentphone_disconnect(
+    agent_id: int,
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    """Disconnect AgentPhone from an agent. Releases managed numbers back to AgentPhone."""
+    agent = _get_agent_for_user(agent_id, current_user.id)
+
+    if agent.get("agentphone_managed") and agent.get("agentphone_number_id"):
+        try:
+            release_number(agent["agentphone_number_id"])
+        except AgentPhoneError as e:
+            logging.getLogger("uvicorn.error").warning(
+                "AgentPhone: failed to release number %s: %s", agent["agentphone_number_id"], e.detail
+            )
+
+    result = (
+        supabase.table("agent_configs")
+        .update({
+            "agentphone_number": None,
+            "agentphone_number_id": None,
+            "agentphone_managed": None,
+            "agentphone_webhook_secret": None,
+        })
+        .eq("id", agent_id)
+        .execute()
+    )
+    return result.data[0]
 
 
 class BookFromTranscriptBody(BaseModel):

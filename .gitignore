@@ -95,6 +95,7 @@ backend/agents/credentials.json
 
 # Node (frontend)
 /frontend/node_modules/
+/node_modules/
 /frontend/dist/
 /frontend/.env
 /frontend/.next/

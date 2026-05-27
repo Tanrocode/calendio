@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { getAgent, deleteAgent, updateAgent, uploadAgentContextPdf, chatWithAgent, saveConversation, speakText, getRealtimeToken, bookFromTranscript, getCalendarStatus, getCalendarAuthUrl } from '../services/api';
+import { getAgent, deleteAgent, updateAgent, uploadAgentContextPdf, chatWithAgent, saveConversation, speakText, bookFromTranscript, getCalendarStatus, getCalendarAuthUrl, connectAgentPhone, provisionAgentPhone, disconnectAgentPhone } from '../services/api';
 import type { AgentConfig } from '../services/api';
 import BusinessHoursEditor, { parseWeekHours, fmtTime } from '../components/BusinessHoursEditor';
 import Sidebar from '../components/Sidebar';
@@ -63,33 +63,20 @@ function formatDuration(secs: number): string {
 /* ── RIGHT PANEL / CONTINUOUS VOICE AGENT ───────────────────────────────────
  *
  * Voice pipeline (fully automatic — no button presses needed):
- *   1. Call starts → agent greets → TTS plays greeting aloud
- *   2. WebSocket opens to OpenAI Realtime API in transcription mode
- *   3. Mic audio streams continuously as PCM16 @ 24 kHz
- *   4. Semantic VAD fires speech_started / speech_stopped events automatically
- *   5. On transcript complete → POST /agents/{id}/chat → LangChain reply
- *   6. Reply → POST /agents/{id}/speak → TTS mp3 → plays in browser
- *   7. If user speaks while agent is talking, TTS is paused immediately (barge-in)
- *   8. On call end → WebSocket closed, mic released, full transcript saved
+ *   1. Call starts → agent greets via TTS (pre-fetched blob for instant play)
+ *   2. Browser SpeechRecognition starts after greeting (continuous + interimResults)
+ *   3. Interim results → 'user_speaking'; final result → handleTranscript
+ *   4. handleTranscript → POST /agents/{id}/chat → LangChain reply
+ *   5. Reply → POST /agents/{id}/speak → TTS mp3 → plays in browser
+ *   6. Barge-in: interim result while TTS plays → audio.pause() → listening
+ *   7. On call end → recognition stopped, transcript saved, booking attempted
  *
- * Text input is always available as a fallback (mic denied, or user prefers
- * typing during the call).
+ * Text input always available as a fallback.
  * ── */
 
 // Possible states of the voice pipeline while a call is active.
 type VoiceState = 'connecting' | 'listening' | 'user_speaking' | 'thinking' | 'agent_speaking';
 
-// Convert an ArrayBuffer to a base64 string for the Realtime API audio payload.
-// Processes in 32KB chunks to avoid call-stack overflow on large buffers.
-function arrayBufferToBase64(buffer: ArrayBuffer): string {
-  const bytes = new Uint8Array(buffer);
-  let binary = '';
-  const chunk = 0x8000;
-  for (let i = 0; i < bytes.length; i += chunk) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
-  }
-  return btoa(binary);
-}
 
 const RightPanel: React.FC<{ agent: AgentConfig; calendarConnected: boolean | null }> = ({ agent, calendarConnected }) => {
   // ── call state ─────────────────────────────────────────────────────────────
@@ -107,25 +94,25 @@ const RightPanel: React.FC<{ agent: AgentConfig; calendarConnected: boolean | nu
   const [micError, setMicError]     = useState<string | null>(null);
 
   // ── refs ───────────────────────────────────────────────────────────────────
-  const bottomRef       = useRef<HTMLDivElement>(null);
-  const inputRef        = useRef<HTMLInputElement>(null);
-  const wsRef           = useRef<WebSocket | null>(null);           // Realtime API socket
-  const audioCtxRef     = useRef<AudioContext | null>(null);        // 24 kHz AudioContext
-  const streamRef       = useRef<MediaStream | null>(null);         // mic media stream
-  const processorRef    = useRef<ScriptProcessorNode | null>(null); // PCM capture node
-  const audioPlayerRef  = useRef<HTMLAudioElement | null>(null);    // TTS playback element
-  const muteRef             = useRef(false);       // true while TTS plays — cleared on barge-in
-  const greetingBlobRef     = useRef<Blob | null>(null); // pre-fetched greeting audio
-  const pendingTranscriptRef = useRef<string | null>(null); // transcript queued during thinking
+  const bottomRef          = useRef<HTMLDivElement>(null);
+  const inputRef           = useRef<HTMLInputElement>(null);
+  const recognitionRef     = useRef<any>(null);
+  const audioPlayerRef     = useRef<HTMLAudioElement | null>(null);
+  const muteRef            = useRef(false);        // true while TTS plays — blocks finals
+  const greetingBlobRef    = useRef<Blob | null>(null);
+  const pendingTranscriptRef = useRef<string | null>(null);
+  const finalDebounceRef   = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const accumRef           = useRef('');           // accumulates speech segments across pauses
+  const energyMonitorRef   = useRef<{ stop: () => void } | null>(null);
+  const energyAboveRef     = useRef(false);        // true when mic energy exceeds TTS bleed threshold
+  const bargeinCallbackRef = useRef<(() => void) | null>(null); // set by speakReply, called by onresult
+  const bargedInRef        = useRef(false);        // true when user interrupted TTS
 
-  // Refs that give the WebSocket onmessage handler access to the latest React
-  // state without stale-closure issues (onmessage is only assigned once).
-  const msgsRef               = useRef<Message[]>([]);
-  const loadingRef            = useRef(false);
-  const callStateRef          = useRef<CallState>('idle');
-  // Pointer to the latest handleTranscript — updated every render so the
-  // WebSocket closure always calls the current version.
-  const transcriptHandlerRef  = useRef<(t: string) => void>(() => {});
+  // Refs so recognition callbacks always see the latest React state.
+  const msgsRef              = useRef<Message[]>([]);
+  const loadingRef           = useRef(false);
+  const callStateRef         = useRef<CallState>('idle');
+  const transcriptHandlerRef = useRef<(t: string) => void>(() => {});
 
   const init = agent.name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
 
@@ -154,8 +141,8 @@ const RightPanel: React.FC<{ agent: AgentConfig; calendarConnected: boolean | nu
     }
   }, [msgs, loading]);
 
-  // ── cleanup: close WebSocket and mic when the component unmounts ───────────
-  useEffect(() => { return () => { disconnectRealtime(); }; }, []);
+  // ── cleanup: stop recognition when the component unmounts ─────────────────
+  useEffect(() => { return () => { stopSpeechRecognition(); }; }, []);
 
   // ── pre-fetch greeting TTS while idle so first word plays instantly ────────
   // Fires whenever we return to idle (after a call ends and user resets).
@@ -167,45 +154,108 @@ const RightPanel: React.FC<{ agent: AgentConfig; calendarConnected: boolean | nu
       .catch(() => { /* non-fatal — startCall falls back to a live TTS call */ });
   }, [callState, calendarConnected]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── TTS: convert agent reply text to speech and play it ───────────────────
-  // preloadedBlob skips the API call for the pre-fetched greeting.
-  // When the user barges in, the speech_started handler calls audio.pause(),
-  // which fires onpause → resolves the promise early.
-  const speakReply = async (text: string, preloadedBlob?: Blob) => {
+  // ── continuous energy monitor: calibrates against TTS bleed, then continuously
+  //    updates energyAboveRef so onresult can gate barge-in on real voice energy ──
+  const startEnergyMonitor = () => {
+    if (energyMonitorRef.current) return; // already running
+    let cancelled = false;
+    navigator.mediaDevices
+      .getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } })
+      .then(stream => {
+        if (cancelled) { stream.getTracks().forEach(t => t.stop()); return; }
+        const ctx = new AudioContext();
+        const analyser = ctx.createAnalyser();
+        analyser.fftSize = 512;
+        ctx.createMediaStreamSource(stream).connect(analyser);
+        const buf = new Uint8Array(analyser.frequencyBinCount);
+        // Calibrate for 500 ms while TTS plays — measures speaker bleed so threshold
+        // sits comfortably above it. User voice is 2.5× louder than the bleed.
+        let calibrating = true, baselineSum = 0, baselineCount = 0, threshold = 40;
+        const calibrationEnd = Date.now() + 500;
+        const cleanup = () => {
+          energyAboveRef.current = false;
+          stream.getTracks().forEach(t => t.stop());
+          ctx.close().catch(() => {});
+        };
+        const check = () => {
+          if (cancelled) return;
+          analyser.getByteFrequencyData(buf);
+          const rms = Math.sqrt(buf.reduce((s, v) => s + v * v, 0) / buf.length);
+          if (calibrating) {
+            baselineSum += rms; baselineCount++;
+            if (Date.now() >= calibrationEnd) {
+              calibrating = false;
+              threshold = Math.max((baselineSum / baselineCount) * 2.5, 25);
+            }
+          } else {
+            energyAboveRef.current = rms > threshold;
+          }
+          requestAnimationFrame(check);
+        };
+        requestAnimationFrame(check);
+        energyMonitorRef.current = {
+          stop: () => { cancelled = true; cleanup(); energyMonitorRef.current = null; },
+        };
+      })
+      .catch(() => { /* mic unavailable — energy-gated barge-in won't work, but recognition-only barge-in still runs */ });
+  };
+
+  // ── TTS: keep recognition running, block finals via muteRef, energy-gate barge-in ──
+  // Recognition stays active the whole time. muteRef=true blocks final submissions
+  // so TTS echo can't sneak in as user input. The energy monitor calibrates against
+  // the TTS bleed level; onresult gates barge-in on BOTH an interim result AND
+  // energy above that threshold — confirming real voice rather than speaker echo.
+  const speakReply = async (text: string, preloaded?: Blob | Promise<Blob>) => {
     setVoiceState('agent_speaking');
     muteRef.current = true;
+    if (finalDebounceRef.current) { clearTimeout(finalDebounceRef.current); finalDebounceRef.current = null; }
+    accumRef.current = '';
+    bargedInRef.current = false;
+
+    // Start calibrating energy while TTS plays so the barge-in threshold
+    // is set above the speaker bleed level before the user can trigger it.
+    startEnergyMonitor();
+
     try {
-      const audioBlob = preloadedBlob ?? await speakText(agent.id, text);
+      const audioBlob = preloaded instanceof Blob
+        ? preloaded
+        : await (preloaded ?? speakText(agent.id, text));
       const url = URL.createObjectURL(audioBlob);
       const audio = new Audio(url);
       audioPlayerRef.current = audio;
+
       await new Promise<void>(resolve => {
+        // onresult calls this when barge-in is confirmed
+        bargeinCallbackRef.current = () => { audio.pause(); resolve(); };
         audio.onended = () => resolve();
         audio.onerror = () => resolve();
-        // Fires when barge-in handler calls audio.pause() mid-sentence.
-        audio.onpause = () => resolve();
-        // play() returns a Promise; if pause() was called before play() resolved
-        // (very fast barge-in) the browser rejects with AbortError — treat as done.
         const p = audio.play();
         if (p) p.catch(() => resolve());
       });
+
+      bargeinCallbackRef.current = null;
+      energyMonitorRef.current?.stop();
+      energyMonitorRef.current = null;
       URL.revokeObjectURL(url);
-    } catch { /* TTS failure is non-fatal */ }
+    } catch {}
     finally {
-      // If the barge-in handler already cleared muteRef, don't override the
-      // 'user_speaking' voice state the handler already set.
-      const wasInterrupted = !muteRef.current;
       muteRef.current = false;
+      if (!bargedInRef.current) {
+        // TTS ended naturally — discard any echo that leaked through during playback
+        if (finalDebounceRef.current) { clearTimeout(finalDebounceRef.current); finalDebounceRef.current = null; }
+        accumRef.current = '';
+      }
+      bargedInRef.current = false;
       audioPlayerRef.current = null;
-      if (!wasInterrupted && wsRef.current?.readyState === WebSocket.OPEN) {
+      if (callStateRef.current === 'active') {
         setVoiceState('listening');
+        // Recognition keeps running — restart only if it dropped out
+        if (!recognitionRef.current) startSpeechRecognition();
       }
     }
   };
 
   // ── chat: send a user turn to the LangChain agent, return reply text ──────
-  // Reads state through refs so it's safe to call from WebSocket callbacks
-  // without stale-closure issues across multiple conversation turns.
   const send = async (text?: string): Promise<string | null> => {
     const msg = (text ?? input).trim();
     if (!msg || loadingRef.current || callStateRef.current !== 'active') return null;
@@ -235,208 +285,177 @@ const RightPanel: React.FC<{ agent: AgentConfig; calendarConnected: boolean | nu
     return reply;
   };
 
-  // ── VAD callback: process completed transcript from the Realtime API ──────
-  // This function is stored in a ref so the WebSocket onmessage always calls
-  // the latest version, even after multiple re-renders.
+  // ── VAD callback: process a completed transcript from SpeechRecognition ───
   const handleTranscript = async (transcript: string) => {
     if (!transcript.trim() || callStateRef.current !== 'active') return;
-    if (loadingRef.current) {
-      // Agent is mid-think — queue this transcript (overwrite any older pending one)
-      // so it gets processed as soon as the current reply finishes.
-      pendingTranscriptRef.current = transcript;
+    // Queue behind any in-flight request OR while TTS is playing (muteRef)
+    if (loadingRef.current || muteRef.current) {
+      const prev = pendingTranscriptRef.current ?? '';
+      pendingTranscriptRef.current = prev ? `${prev} ${transcript}` : transcript;
       return;
     }
+
+    // Clear buffered speech — but keep recognition RUNNING so the user can
+    // speak during the thinking phase and interrupt when the reply comes back.
+    if (finalDebounceRef.current) { clearTimeout(finalDebounceRef.current); finalDebounceRef.current = null; }
+    accumRef.current = '';
+
+    // loadingRef.current = true is set synchronously inside send() before the
+    // first await, so any concurrent transcript arrival will be queued above.
     const reply = await send(transcript);
-    if (reply) await speakReply(reply);
-    // Drain one pending transcript (set during thinking or while agent was speaking)
+    if (reply) {
+      const ttsPromise = speakText(agent.id, reply);
+      await speakReply(reply, ttsPromise);
+    }
     const pending = pendingTranscriptRef.current;
     if (pending && callStateRef.current === 'active') {
       pendingTranscriptRef.current = null;
       await handleTranscript(pending);
     }
   };
-  // Update the ref every render so onmessage always has the latest handler.
   transcriptHandlerRef.current = handleTranscript;
 
-  // ── start streaming PCM16 mic audio into the open WebSocket ───────────────
-  const startMicStream = async (ws: WebSocket) => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true },
-      });
+  // ── start browser SpeechRecognition for VAD + STT ────────────────────────
+  const startSpeechRecognition = () => {
+    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SR) {
+      setMicError('Voice requires Chrome or Edge — you can still type.');
+      setVoiceState(null);
+      return;
+    }
 
-      // Use the AudioContext pre-created in startCall (inside the click handler).
-      // If we created it here instead, Chrome would suspend it immediately because
-      // ws.onopen is not a user-gesture context — onaudioprocess would never fire.
-      const audioCtx = audioCtxRef.current!;
+    const recognition = new SR();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = 'en-US';
 
-      // Resume in case the context was suspended between creation and first use.
-      if (audioCtx.state !== 'running') {
-        try { await audioCtx.resume(); } catch { /* best effort */ }
+    recognition.onstart = () => {
+      if (callStateRef.current === 'active') setVoiceState('listening');
+    };
+
+    recognition.onresult = (event: any) => {
+      let interim = '';
+      let final = '';
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const r = event.results[i];
+        if (r.isFinal) final += r[0].transcript;
+        else interim += r[0].transcript;
       }
 
-      const source    = audioCtx.createMediaStreamSource(stream);
-      const processor = audioCtx.createScriptProcessor(4096, 1, 1);
-
-      let chunkCount = 0;
-      processor.onaudioprocess = (e) => {
-        if (ws.readyState !== WebSocket.OPEN) return;
-        // Always stream mic audio — echo cancellation (set in getUserMedia) prevents
-        // TTS speaker output from reaching the VAD.  Keeping the stream live during
-        // agent speech is what enables barge-in (speech_started fires → TTS paused).
-        chunkCount++;
-        // Log every 30 chunks (~5 s) so you can confirm audio is flowing in DevTools.
-        if (chunkCount % 30 === 0) console.log(`[VAD] audio flowing — ${chunkCount} chunks sent`);
-        const samples = e.inputBuffer.getChannelData(0);
-        // Convert Float32 [-1, 1] → Int16 [-32768, 32767] for the Realtime API
-        const pcm = new Int16Array(samples.length);
-        for (let i = 0; i < samples.length; i++) {
-          pcm[i] = Math.max(-32768, Math.min(32767, Math.round(samples[i] * 32768)));
-        }
-        ws.send(JSON.stringify({
-          type: 'input_audio_buffer.append',
-          audio: arrayBufferToBase64(pcm.buffer),
-        }));
-      };
-
-      // A downstream node is required for onaudioprocess to fire, but we must
-      // NOT connect to audioCtx.destination — that would play the raw mic audio
-      // back through the speakers, causing echo and confusing the VAD.
-      // A zero-gain node silences the output while satisfying the Web Audio graph.
-      const silentGain = audioCtx.createGain();
-      silentGain.gain.value = 0;
-      source.connect(processor);
-      processor.connect(silentGain);
-      silentGain.connect(audioCtx.destination);
-
-      streamRef.current    = stream;
-      processorRef.current = processor;
-    } catch {
-      setMicError('Microphone access denied — you can still type your message.');
-    }
-  };
-
-  // ── connect to OpenAI Realtime API for transcription + semantic VAD ────────
-  const connectRealtime = async () => {
-    setVoiceState('connecting');
-    setMicError(null);
-    try {
-      // Backend creates an ephemeral token so the API key is never sent to the browser.
-      const tokenData = await getRealtimeToken(agent.id);
-      const token = tokenData.client_secret.value;
-
-      // Subprotocols carry the ephemeral token and API version for browser auth.
-      const ws = new WebSocket(
-        'wss://api.openai.com/v1/realtime?intent=transcription',
-        ['realtime', `openai-insecure-api-key.${token}`, 'openai-beta.realtime-v1'],
-      );
-
-      ws.onopen = () => {
-        console.log('[VAD] WebSocket connected — sending session.update');
-        ws.send(JSON.stringify({
-          type: 'session.update',
-          session: {
-            input_audio_format: 'pcm16',
-            input_audio_transcription: { model: 'gpt-4o-transcribe' },
-            turn_detection: {
-              type: 'server_vad',
-              threshold: 0.5,
-              prefix_padding_ms: 300,
-              silence_duration_ms: 700,
-            },
-          },
-        }));
-        startMicStream(ws);
-        setVoiceState('listening');
-      };
-
-      ws.onmessage = (event) => {
-        const msg = JSON.parse(event.data as string);
-        // Log every event so you can see the full pipeline in DevTools console.
-        // speech_started / speech_stopped confirm VAD is receiving audio.
-        // transcript.completed is the final trigger for the agent reply.
-        console.log('[VAD] event:', msg.type, msg.type === 'conversation.item.input_audio_transcription.completed' ? `"${msg.transcript}"` : '');
-        switch (msg.type) {
-          case 'input_audio_buffer.speech_started':
-            // Barge-in: stop TTS immediately so the user's voice takes over.
-            // Clear muteRef FIRST so speech_stopped → 'thinking' works if the
-            // events arrive in the same tick.
-            if (muteRef.current) {
-              muteRef.current = false;
-              audioPlayerRef.current?.pause(); // onpause → resolves speakReply
-            }
+      if (interim) {
+        if (muteRef.current) {
+          // TTS is playing — check BOTH conditions before triggering barge-in:
+          //   1. SpeechRecognition sees a speech pattern (this interim)
+          //   2. Mic energy is above the calibrated TTS-bleed threshold
+          // Together they distinguish real voice from speaker echo.
+          if (energyAboveRef.current && bargeinCallbackRef.current) {
+            bargedInRef.current = true;
+            muteRef.current = false;
+            energyMonitorRef.current?.stop();
+            energyMonitorRef.current = null;
+            if (finalDebounceRef.current) { clearTimeout(finalDebounceRef.current); finalDebounceRef.current = null; }
+            accumRef.current = '';
+            const cb = bargeinCallbackRef.current;
+            bargeinCallbackRef.current = null;
             setVoiceState('user_speaking');
-            break;
-          case 'input_audio_buffer.speech_stopped':
-            // Only switch to thinking when we're not mid-TTS (muteRef already
-            // cleared by barge-in above if that's what caused the stop).
-            if (!muteRef.current) setVoiceState('thinking');
-            break;
-          case 'conversation.item.input_audio_transcription.completed':
-            transcriptHandlerRef.current(msg.transcript ?? '');
-            break;
-          default:
-            break;
+            cb(); // pause audio and resolve speakReply
+          }
+          // No else — while muteRef=true and energy is low, ignore interim (TTS echo)
+        } else {
+          // Normal listening — user is speaking
+          setVoiceState('user_speaking');
+          // Reset the submit timer when mid-sentence interim arrives to prevent
+          // Chrome's early isFinal from splitting one thought into two messages.
+          if (accumRef.current && finalDebounceRef.current) {
+            clearTimeout(finalDebounceRef.current);
+            finalDebounceRef.current = setTimeout(() => {
+              finalDebounceRef.current = null;
+              const text = accumRef.current.trim();
+              accumRef.current = '';
+              if (text && callStateRef.current === 'active') {
+                setVoiceState('thinking');
+                transcriptHandlerRef.current(text);
+              }
+            }, 1500);
+          }
         }
-      };
+      }
 
-      ws.onerror = (e) => {
-        console.error('[VAD] WebSocket error', e);
-        setMicError('Voice connection error — you can still type.');
-      };
-      ws.onclose = (e) => {
-        console.warn('[VAD] WebSocket closed — code:', e.code, 'reason:', e.reason || '(none)');
-        if (wsRef.current === ws) wsRef.current = null;
-      };
+      if (final.trim()) {
+        if (muteRef.current) return; // TTS playing — discard (could be speaker echo)
+        accumRef.current = (accumRef.current + ' ' + final.trim()).trim();
+        if (finalDebounceRef.current) clearTimeout(finalDebounceRef.current);
+        finalDebounceRef.current = setTimeout(() => {
+          finalDebounceRef.current = null;
+          const text = accumRef.current.trim();
+          accumRef.current = '';
+          if (text && callStateRef.current === 'active') {
+            setVoiceState('thinking');
+            transcriptHandlerRef.current(text);
+          }
+        }, 1500);
+      }
+    };
 
-      wsRef.current = ws;
-    } catch {
+    recognition.onerror = (event: any) => {
+      if (event.error === 'not-allowed') {
+        setMicError('Microphone access denied — you can still type.');
+      } else if (event.error !== 'no-speech') {
+        console.warn('[STT] error:', event.error);
+      }
+    };
+
+    // SpeechRecognition stops after silence — restart to keep it live.
+    recognition.onend = () => {
+      if (callStateRef.current === 'active' && recognitionRef.current === recognition) {
+        try { recognition.start(); } catch { /* already starting */ }
+      }
+    };
+
+    recognitionRef.current = recognition;
+    try { recognition.start(); } catch {
       setMicError('Could not start voice — you can still type.');
       setVoiceState(null);
     }
   };
 
-  // ── tear down WebSocket and release all audio resources ───────────────────
-  const disconnectRealtime = () => {
-    processorRef.current?.disconnect();
-    processorRef.current = null;
-    audioCtxRef.current?.close();
-    audioCtxRef.current = null;
-    streamRef.current?.getTracks().forEach(t => t.stop());
-    streamRef.current = null;
-    wsRef.current?.close();
-    wsRef.current = null;
+  // ── stop recognition, energy monitor, audio, and any pending debounce ───────
+  const stopSpeechRecognition = () => {
+    if (finalDebounceRef.current) { clearTimeout(finalDebounceRef.current); finalDebounceRef.current = null; }
+    accumRef.current = '';
+    bargeinCallbackRef.current = null;
+    bargedInRef.current = false;
+    if (energyMonitorRef.current) { energyMonitorRef.current.stop(); energyMonitorRef.current = null; }
+    if (recognitionRef.current) {
+      recognitionRef.current.onend = null;
+      try { recognitionRef.current.stop(); } catch {}
+      recognitionRef.current = null;
+    }
     if (audioPlayerRef.current) { audioPlayerRef.current.pause(); audioPlayerRef.current = null; }
     muteRef.current = false;
   };
 
-  // ── START CALL: agent greets first, then open Realtime mic ────────────────
+  // ── START CALL: start recognition first (so it runs the whole call),
+  //    then play the greeting — muteRef=true during greeting blocks any echo ──
   const startCall = async () => {
-    // AudioContext MUST be created synchronously here — before any await — while
-    // the browser is still inside the click-event user-gesture frame.
-    // If created later (e.g. inside ws.onopen), Chrome suspends the context
-    // immediately and onaudioprocess never fires, so no audio reaches the VAD.
-    audioCtxRef.current = new AudioContext({ sampleRate: 24000 });
-
     setElapsed(0);
     setCallState('active');
     const t = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     const greetingText = `Hello! Thank you for calling ${agent.name}. How can I help you today?`;
     setMsgs([{ role: 'assistant', content: greetingText, t }]);
 
-    // Start WebSocket BEFORE awaiting TTS so the mic is ready as soon as the
-    // greeting finishes.  If the blob was pre-fetched the greeting plays instantly,
-    // giving the WebSocket the full playback window to connect.
-    connectRealtime(); // intentionally non-awaited — runs in parallel
+    // Start recognition before speaking so it's live for the entire call.
+    // Finals during the greeting are blocked by muteRef=true inside speakReply.
+    startSpeechRecognition();
+
     const cachedBlob = greetingBlobRef.current ?? undefined;
-    greetingBlobRef.current = null; // clear so next call triggers a fresh pre-fetch
+    greetingBlobRef.current = null;
     await speakReply(greetingText, cachedBlob);
   };
 
-  // ── END CALL: stop audio, disconnect mic, save transcript, then book ─────────
+  // ── END CALL: stop audio, stop recognition, save transcript, then book ──────
   const endCall = async () => {
-    if (audioPlayerRef.current) { audioPlayerRef.current.pause(); audioPlayerRef.current = null; }
-    disconnectRealtime();
+    stopSpeechRecognition();
     const snapshot = msgs; // capture before state clears
     setCallState('ended');
     setVoiceState(null);
@@ -471,6 +490,7 @@ const RightPanel: React.FC<{ agent: AgentConfig; calendarConnected: boolean | nu
 
   // ── RESET: back to idle ────────────────────────────────────────────────────
   const resetCall = () => {
+    stopSpeechRecognition();
     setMsgs([]); setElapsed(0); setCallState('idle');
     setSaveError(null); setMicError(null); setVoiceState(null); setBookingStatus(null);
     pendingTranscriptRef.current = null;
@@ -480,7 +500,6 @@ const RightPanel: React.FC<{ agent: AgentConfig; calendarConnected: boolean | nu
   const statusLine = (() => {
     if (callState === 'idle')  return 'Ready — press Start Call to begin';
     if (callState === 'ended') return `Ended · ${formatDuration(elapsed)} · ${userTurns} msg${userTurns !== 1 ? 's' : ''} · ${saveError ? 'Save failed' : 'Saved'}`;
-    if (voiceState === 'connecting')     return '◌ Connecting…';
     if (voiceState === 'user_speaking')  return '🔴 Hearing you…';
     if (voiceState === 'thinking')       return '✦ Thinking…';
     if (voiceState === 'agent_speaking') return '🔊 Agent speaking…';
@@ -666,7 +685,6 @@ const RightPanel: React.FC<{ agent: AgentConfig; calendarConnected: boolean | nu
                 animation: 'pip-pulse 1.2s ease-in-out infinite',
               }} />
               <span style={{ fontSize: 11, fontWeight: 500, color: 'var(--text-soft)' }}>
-                {voiceState === 'connecting'     && 'Connecting voice…'}
                 {voiceState === 'listening'      && 'Listening — speak naturally'}
                 {voiceState === 'user_speaking'  && 'Hearing you…'}
                 {voiceState === 'thinking'       && 'Thinking…'}
@@ -726,6 +744,16 @@ const AgentPage: React.FC = () => {
   const [editSaving, setEditSaving] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
 
+  // AgentPhone connect panel
+  type ApMode = 'choose' | 'byon' | 'provision';
+  const [apPanelOpen, setApPanelOpen] = useState(false);
+  const [apMode, setApMode] = useState<ApMode>('choose');
+  const [apByonNumber, setApByonNumber] = useState('');
+  const [apByonSecret, setApByonSecret] = useState('');
+  const [apAreaCode, setApAreaCode] = useState('');
+  const [apLoading, setApLoading] = useState(false);
+  const [apError, setApError] = useState<string | null>(null);
+
   // PDF upload state (context section)
   const [pdfUploading, setPdfUploading] = useState(false);
   const [pdfError, setPdfError] = useState<string | null>(null);
@@ -783,6 +811,7 @@ const AgentPage: React.FC = () => {
         business_hours: editForm.business_hours || undefined,
         agent_instructions: editForm.agent_instructions || undefined,
         context: editForm.context || undefined,
+        // Send null when cleared so the DB column is wiped (not just left as the prior value)
       });
       setAgent(updated);
       setEditMode(false);
@@ -1063,6 +1092,154 @@ const AgentPage: React.FC = () => {
                   <button onClick={handleConnectCalendar} disabled={calendarLoading} style={{ fontSize: 11, fontWeight: 600, color: 'var(--plum-mid)', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'var(--font-ui)' }}>
                     {calendarLoading ? 'Connecting…' : 'Connect'}
                   </button>
+                )}
+              </div>
+
+              {/* AgentPhone — connect panel */}
+              <div style={{ padding: '8px 0' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, fontWeight: 500, color: 'var(--text-dark)' }}>
+                    <div style={{ width: 22, height: 22, borderRadius: 6, border: '1px solid var(--border)', background: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11 }}>☎</div>
+                    AgentPhone
+                  </div>
+                  {agent.agentphone_number ? (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, fontWeight: 600, color: 'var(--green)' }}>
+                        <div style={{ width: 5, height: 5, background: 'var(--green)', borderRadius: '50%' }} />
+                        {agent.agentphone_number}
+                        {agent.agentphone_managed && <span style={{ fontSize: 10, color: 'var(--text-soft)', fontWeight: 400 }}> · managed</span>}
+                      </div>
+                      <button
+                        onClick={async () => {
+                          if (!confirm('Disconnect AgentPhone? Managed numbers will be released.')) return;
+                          setApLoading(true); setApError(null);
+                          try {
+                            const updated = await disconnectAgentPhone(agent.id);
+                            setAgent(updated);
+                            setApPanelOpen(false);
+                          } catch { setApError('Failed to disconnect.'); }
+                          finally { setApLoading(false); }
+                        }}
+                        disabled={apLoading}
+                        style={{ fontSize: 10, color: 'var(--text-soft)', background: 'none', border: 'none', cursor: 'pointer', padding: 0, textDecoration: 'underline' }}
+                      >
+                        Disconnect
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => { setApPanelOpen(p => !p); setApMode('choose'); setApError(null); }}
+                      style={{ fontSize: 11, fontWeight: 600, color: 'var(--plum)', background: 'var(--lavender-bg)', border: '1px solid var(--lavender-dark)', borderRadius: 6, padding: '4px 10px', cursor: 'pointer', fontFamily: 'var(--font-ui)' }}
+                    >
+                      Connect
+                    </button>
+                  )}
+                </div>
+
+                {/* Inline connect panel */}
+                {apPanelOpen && !agent.agentphone_number && (
+                  <div style={{ marginTop: 10, background: 'var(--lavender-bg)', border: '1px solid var(--lavender-dark)', borderRadius: 10, padding: 14 }}>
+                    {apMode === 'choose' && (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-dark)', marginBottom: 2 }}>How would you like to connect?</div>
+                        <button
+                          onClick={() => setApMode('provision')}
+                          style={{ textAlign: 'left', background: 'white', border: '1px solid var(--border)', borderRadius: 8, padding: '10px 12px', cursor: 'pointer', fontFamily: 'var(--font-ui)' }}
+                        >
+                          <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-dark)' }}>Generate a number for me</div>
+                          <div style={{ fontSize: 10, color: 'var(--text-soft)', marginTop: 2 }}>We provision a new number from your AgentPhone credits ($3/mo)</div>
+                        </button>
+                        <button
+                          onClick={() => setApMode('byon')}
+                          style={{ textAlign: 'left', background: 'white', border: '1px solid var(--border)', borderRadius: 8, padding: '10px 12px', cursor: 'pointer', fontFamily: 'var(--font-ui)' }}
+                        >
+                          <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-dark)' }}>Use my own number</div>
+                          <div style={{ fontSize: 10, color: 'var(--text-soft)', marginTop: 2 }}>Paste a number from your AgentPhone account + its webhook secret</div>
+                        </button>
+                      </div>
+                    )}
+
+                    {apMode === 'byon' && (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        <button onClick={() => setApMode('choose')} style={{ alignSelf: 'flex-start', background: 'none', border: 'none', fontSize: 11, color: 'var(--text-soft)', cursor: 'pointer', padding: 0 }}>← Back</button>
+                        <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-dark)' }}>Use my own AgentPhone number</div>
+                        <input
+                          value={apByonNumber}
+                          onChange={e => setApByonNumber(e.target.value)}
+                          placeholder="+14155551234"
+                          style={fieldInputStyle}
+                          onFocus={e => (e.target.style.borderColor = 'var(--plum-xlight)')}
+                          onBlur={e => (e.target.style.borderColor = 'var(--lavender-dark)')}
+                        />
+                        <input
+                          value={apByonSecret}
+                          onChange={e => setApByonSecret(e.target.value)}
+                          placeholder="Webhook signing secret"
+                          type="password"
+                          style={fieldInputStyle}
+                          onFocus={e => (e.target.style.borderColor = 'var(--plum-xlight)')}
+                          onBlur={e => (e.target.style.borderColor = 'var(--lavender-dark)')}
+                        />
+                        <div style={{ fontSize: 10, color: 'var(--text-soft)', lineHeight: 1.4 }}>
+                          Set your webhook URL in AgentPhone to: <code style={{ background: 'white', padding: '1px 4px', borderRadius: 3 }}>/webhooks/agentphone</code>
+                        </div>
+                        {apError && <div style={{ fontSize: 11, color: '#991B1B', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 6, padding: '6px 10px' }}>{apError}</div>}
+                        <button
+                          onClick={async () => {
+                            setApLoading(true); setApError(null);
+                            try {
+                              const updated = await connectAgentPhone(agent.id, apByonNumber, apByonSecret);
+                              setAgent(updated);
+                              setApPanelOpen(false);
+                            } catch (err: unknown) {
+                              const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+                              setApError(msg || 'Failed to connect. Check your number and secret.');
+                            } finally { setApLoading(false); }
+                          }}
+                          disabled={apLoading || !apByonNumber || !apByonSecret}
+                          style={{ background: 'var(--plum)', color: 'white', border: 'none', borderRadius: 7, padding: '8px 0', fontSize: 12, fontWeight: 600, cursor: apLoading ? 'not-allowed' : 'pointer', opacity: (apLoading || !apByonNumber || !apByonSecret) ? 0.6 : 1, fontFamily: 'var(--font-ui)' }}
+                        >
+                          {apLoading ? 'Connecting…' : 'Connect & Verify'}
+                        </button>
+                      </div>
+                    )}
+
+                    {apMode === 'provision' && (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        <button onClick={() => setApMode('choose')} style={{ alignSelf: 'flex-start', background: 'none', border: 'none', fontSize: 11, color: 'var(--text-soft)', cursor: 'pointer', padding: 0 }}>← Back</button>
+                        <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-dark)' }}>Generate a phone number</div>
+                        <input
+                          value={apAreaCode}
+                          onChange={e => setApAreaCode(e.target.value)}
+                          placeholder="Area code (optional, e.g. 415)"
+                          style={fieldInputStyle}
+                          onFocus={e => (e.target.style.borderColor = 'var(--plum-xlight)')}
+                          onBlur={e => (e.target.style.borderColor = 'var(--lavender-dark)')}
+                        />
+                        <div style={{ fontSize: 10, color: 'var(--text-soft)', lineHeight: 1.4 }}>
+                          This will use 1 phone number credit from your account ($3/mo per number).
+                        </div>
+                        {apError && <div style={{ fontSize: 11, color: '#991B1B', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 6, padding: '6px 10px' }}>{apError}</div>}
+                        <button
+                          onClick={async () => {
+                            setApLoading(true); setApError(null);
+                            try {
+                              const updated = await provisionAgentPhone(agent.id, apAreaCode || undefined);
+                              setAgent(updated);
+                              setApPanelOpen(false);
+                            } catch (err: unknown) {
+                              const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+                              setApError(msg || 'Failed to provision number.');
+                            } finally { setApLoading(false); }
+                          }}
+                          disabled={apLoading}
+                          style={{ background: 'var(--plum)', color: 'white', border: 'none', borderRadius: 7, padding: '8px 0', fontSize: 12, fontWeight: 600, cursor: apLoading ? 'not-allowed' : 'pointer', opacity: apLoading ? 0.6 : 1, fontFamily: 'var(--font-ui)' }}
+                        >
+                          {apLoading ? 'Provisioning…' : 'Generate Number'}
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 )}
               </div>
             </div>

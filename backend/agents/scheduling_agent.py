@@ -282,18 +282,26 @@ class SchedulingAgent:
         self,
         user_id: int,
         message: str,
-        request: Request,
+        request: Optional[Request] = None,
         history: Optional[List[Dict[str, Any]]] = None,
         agent_id: Optional[int] = None,
+        oauth_session: Optional[Dict[str, Optional[str]]] = None,
     ) -> Dict[str, Any]:
-        if "token" not in request.session:
+        # Two ways to supply Google OAuth credentials:
+        #   1. `request.session` — used by the browser chat endpoint (cookie-based)
+        #   2. `oauth_session` dict — used by callers without a session (e.g. AgentPhone webhook)
+        if oauth_session is None:
+            if request is None or "token" not in request.session:
+                return {"reply": "Connect your Google Calendar first, then book an appointment."}
+            oauth_session = {
+                "token": request.session.get("token"),
+                "refresh_token": request.session.get("refresh_token"),
+            }
+        elif not oauth_session.get("token"):
             return {"reply": "Connect your Google Calendar first, then book an appointment."}
 
         # Stash session-derived values where @tool functions can read them via ContextVar.
-        oauth_token_tok = _OAUTH_SESSION_CTX.set({
-            "token": request.session.get("token"),
-            "refresh_token": request.session.get("refresh_token"),
-        })
+        oauth_token_tok = _OAUTH_SESSION_CTX.set(oauth_session)
         business_tok = _BUSINESS_CTX.set({
             "calendar_id": "primary",
             "timezone": "America/Los_Angeles",
@@ -325,7 +333,26 @@ class SchedulingAgent:
             })
             reply = result["output"]
             return {"reply": reply}
-        except Exception:
+        except Exception as exc:
+            # If the failure is a revoked/expired Google OAuth token, return a
+            # friendly message instead of crashing — the user just needs to
+            # reconnect their calendar from the dashboard.
+            try:
+                from google.auth.exceptions import RefreshError
+                _chain = exc
+                while _chain is not None:
+                    if isinstance(_chain, RefreshError):
+                        logger.warning("Google OAuth token expired/revoked — user must reconnect calendar.")
+                        return {
+                            "reply": (
+                                "I'm sorry, but my connection to Google Calendar has expired. "
+                                "The business owner needs to reconnect their calendar from the dashboard. "
+                                "Is there anything else I can help you with?"
+                            )
+                        }
+                    _chain = getattr(_chain, "__cause__", None) or getattr(_chain, "__context__", None)
+            except ImportError:
+                pass
             logger.exception("agent.invoke failed")
             raise
         finally:

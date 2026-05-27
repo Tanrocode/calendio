@@ -1,9 +1,9 @@
 fastapi
 uvicorn
 pydantic
-langchain
-langchain-core
-langchain-openai
+langchain==0.3.25
+langchain-core==0.3.59
+langchain-openai==0.3.16
 openai
 python-dotenv
 google-auth-oauthlib
