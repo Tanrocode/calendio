@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { getAgent, deleteAgent, updateAgent, uploadAgentContextPdf, chatWithAgent, saveConversation, speakText, bookFromTranscript, getCalendarStatus, getCalendarAuthUrl } from '../services/api';
+import { getAgent, deleteAgent, updateAgent, uploadAgentContextPdf, chatWithAgent, saveConversation, speakText, bookFromTranscript, getCalendarStatus, getCalendarAuthUrl, connectAgentPhone, provisionAgentPhone, disconnectAgentPhone } from '../services/api';
 import type { AgentConfig } from '../services/api';
 import BusinessHoursEditor, { parseWeekHours, fmtTime } from '../components/BusinessHoursEditor';
 import Sidebar from '../components/Sidebar';
@@ -740,9 +740,19 @@ const AgentPage: React.FC = () => {
 
   // Edit mode — allows updating name, services, hours, instructions, context inline
   const [editMode, setEditMode] = useState(false);
-  const [editForm, setEditForm] = useState({ name: '', services: '', business_hours: '', agent_instructions: '', context: '', agentphone_number: '' });
+  const [editForm, setEditForm] = useState({ name: '', services: '', business_hours: '', agent_instructions: '', context: '' });
   const [editSaving, setEditSaving] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
+
+  // AgentPhone connect panel
+  type ApMode = 'choose' | 'byon' | 'provision';
+  const [apPanelOpen, setApPanelOpen] = useState(false);
+  const [apMode, setApMode] = useState<ApMode>('choose');
+  const [apByonNumber, setApByonNumber] = useState('');
+  const [apByonSecret, setApByonSecret] = useState('');
+  const [apAreaCode, setApAreaCode] = useState('');
+  const [apLoading, setApLoading] = useState(false);
+  const [apError, setApError] = useState<string | null>(null);
 
   // PDF upload state (context section)
   const [pdfUploading, setPdfUploading] = useState(false);
@@ -782,7 +792,6 @@ const AgentPage: React.FC = () => {
       business_hours: agent.business_hours ?? '',
       agent_instructions: agent.agent_instructions ?? '',
       context: agent.context ?? '',
-      agentphone_number: agent.agentphone_number ?? '',
     });
     setEditError(null);
     setEditMode(true);
@@ -803,7 +812,6 @@ const AgentPage: React.FC = () => {
         agent_instructions: editForm.agent_instructions || undefined,
         context: editForm.context || undefined,
         // Send null when cleared so the DB column is wiped (not just left as the prior value)
-        agentphone_number: editForm.agentphone_number.trim() || null,
       });
       setAgent(updated);
       setEditMode(false);
@@ -1087,40 +1095,151 @@ const AgentPage: React.FC = () => {
                 )}
               </div>
 
-              {/* AgentPhone — assign your one shared number to whichever agent should answer */}
+              {/* AgentPhone — connect panel */}
               <div style={{ padding: '8px 0' }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: editMode ? 8 : 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, fontWeight: 500, color: 'var(--text-dark)' }}>
-                    <div style={{ width: 22, height: 22, borderRadius: 6, border: '1px solid var(--border)', background: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11 }}>
-                      ☎
-                    </div>
+                    <div style={{ width: 22, height: 22, borderRadius: 6, border: '1px solid var(--border)', background: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11 }}>☎</div>
                     AgentPhone
                   </div>
-                  {!editMode && (
-                    agent.agentphone_number ? (
+                  {agent.agentphone_number ? (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, fontWeight: 600, color: 'var(--green)' }}>
                         <div style={{ width: 5, height: 5, background: 'var(--green)', borderRadius: '50%' }} />
                         {agent.agentphone_number}
+                        {agent.agentphone_managed && <span style={{ fontSize: 10, color: 'var(--text-soft)', fontWeight: 400 }}> · managed</span>}
                       </div>
-                    ) : (
-                      <div style={{ fontSize: 11, color: 'var(--text-soft)', fontStyle: 'italic' }}>Not assigned</div>
-                    )
+                      <button
+                        onClick={async () => {
+                          if (!confirm('Disconnect AgentPhone? Managed numbers will be released.')) return;
+                          setApLoading(true); setApError(null);
+                          try {
+                            const updated = await disconnectAgentPhone(agent.id);
+                            setAgent(updated);
+                            setApPanelOpen(false);
+                          } catch { setApError('Failed to disconnect.'); }
+                          finally { setApLoading(false); }
+                        }}
+                        disabled={apLoading}
+                        style={{ fontSize: 10, color: 'var(--text-soft)', background: 'none', border: 'none', cursor: 'pointer', padding: 0, textDecoration: 'underline' }}
+                      >
+                        Disconnect
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => { setApPanelOpen(p => !p); setApMode('choose'); setApError(null); }}
+                      style={{ fontSize: 11, fontWeight: 600, color: 'var(--plum)', background: 'var(--lavender-bg)', border: '1px solid var(--lavender-dark)', borderRadius: 6, padding: '4px 10px', cursor: 'pointer', fontFamily: 'var(--font-ui)' }}
+                    >
+                      Connect
+                    </button>
                   )}
                 </div>
-                {editMode && (
-                  <>
-                    <input
-                      value={editForm.agentphone_number}
-                      onChange={e => setEditForm(f => ({ ...f, agentphone_number: e.target.value }))}
-                      placeholder="+15393287802"
-                      style={fieldInputStyle}
-                      onFocus={e => (e.target.style.borderColor = 'var(--plum-xlight)')}
-                      onBlur={e => (e.target.style.borderColor = 'var(--lavender-dark)')}
-                    />
-                    <div style={{ fontSize: 10, color: 'var(--text-soft)', marginTop: 4, lineHeight: 1.4 }}>
-                      Paste your AgentPhone number (E.164 format). Only one agent should hold this at a time — inbound calls route to whoever has it.
-                    </div>
-                  </>
+
+                {/* Inline connect panel */}
+                {apPanelOpen && !agent.agentphone_number && (
+                  <div style={{ marginTop: 10, background: 'var(--lavender-bg)', border: '1px solid var(--lavender-dark)', borderRadius: 10, padding: 14 }}>
+                    {apMode === 'choose' && (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-dark)', marginBottom: 2 }}>How would you like to connect?</div>
+                        <button
+                          onClick={() => setApMode('provision')}
+                          style={{ textAlign: 'left', background: 'white', border: '1px solid var(--border)', borderRadius: 8, padding: '10px 12px', cursor: 'pointer', fontFamily: 'var(--font-ui)' }}
+                        >
+                          <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-dark)' }}>Generate a number for me</div>
+                          <div style={{ fontSize: 10, color: 'var(--text-soft)', marginTop: 2 }}>We provision a new number from your AgentPhone credits ($3/mo)</div>
+                        </button>
+                        <button
+                          onClick={() => setApMode('byon')}
+                          style={{ textAlign: 'left', background: 'white', border: '1px solid var(--border)', borderRadius: 8, padding: '10px 12px', cursor: 'pointer', fontFamily: 'var(--font-ui)' }}
+                        >
+                          <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-dark)' }}>Use my own number</div>
+                          <div style={{ fontSize: 10, color: 'var(--text-soft)', marginTop: 2 }}>Paste a number from your AgentPhone account + its webhook secret</div>
+                        </button>
+                      </div>
+                    )}
+
+                    {apMode === 'byon' && (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        <button onClick={() => setApMode('choose')} style={{ alignSelf: 'flex-start', background: 'none', border: 'none', fontSize: 11, color: 'var(--text-soft)', cursor: 'pointer', padding: 0 }}>← Back</button>
+                        <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-dark)' }}>Use my own AgentPhone number</div>
+                        <input
+                          value={apByonNumber}
+                          onChange={e => setApByonNumber(e.target.value)}
+                          placeholder="+14155551234"
+                          style={fieldInputStyle}
+                          onFocus={e => (e.target.style.borderColor = 'var(--plum-xlight)')}
+                          onBlur={e => (e.target.style.borderColor = 'var(--lavender-dark)')}
+                        />
+                        <input
+                          value={apByonSecret}
+                          onChange={e => setApByonSecret(e.target.value)}
+                          placeholder="Webhook signing secret"
+                          type="password"
+                          style={fieldInputStyle}
+                          onFocus={e => (e.target.style.borderColor = 'var(--plum-xlight)')}
+                          onBlur={e => (e.target.style.borderColor = 'var(--lavender-dark)')}
+                        />
+                        <div style={{ fontSize: 10, color: 'var(--text-soft)', lineHeight: 1.4 }}>
+                          Set your webhook URL in AgentPhone to: <code style={{ background: 'white', padding: '1px 4px', borderRadius: 3 }}>/webhooks/agentphone</code>
+                        </div>
+                        {apError && <div style={{ fontSize: 11, color: '#991B1B', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 6, padding: '6px 10px' }}>{apError}</div>}
+                        <button
+                          onClick={async () => {
+                            setApLoading(true); setApError(null);
+                            try {
+                              const updated = await connectAgentPhone(agent.id, apByonNumber, apByonSecret);
+                              setAgent(updated);
+                              setApPanelOpen(false);
+                            } catch (err: unknown) {
+                              const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+                              setApError(msg || 'Failed to connect. Check your number and secret.');
+                            } finally { setApLoading(false); }
+                          }}
+                          disabled={apLoading || !apByonNumber || !apByonSecret}
+                          style={{ background: 'var(--plum)', color: 'white', border: 'none', borderRadius: 7, padding: '8px 0', fontSize: 12, fontWeight: 600, cursor: apLoading ? 'not-allowed' : 'pointer', opacity: (apLoading || !apByonNumber || !apByonSecret) ? 0.6 : 1, fontFamily: 'var(--font-ui)' }}
+                        >
+                          {apLoading ? 'Connecting…' : 'Connect & Verify'}
+                        </button>
+                      </div>
+                    )}
+
+                    {apMode === 'provision' && (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        <button onClick={() => setApMode('choose')} style={{ alignSelf: 'flex-start', background: 'none', border: 'none', fontSize: 11, color: 'var(--text-soft)', cursor: 'pointer', padding: 0 }}>← Back</button>
+                        <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-dark)' }}>Generate a phone number</div>
+                        <input
+                          value={apAreaCode}
+                          onChange={e => setApAreaCode(e.target.value)}
+                          placeholder="Area code (optional, e.g. 415)"
+                          style={fieldInputStyle}
+                          onFocus={e => (e.target.style.borderColor = 'var(--plum-xlight)')}
+                          onBlur={e => (e.target.style.borderColor = 'var(--lavender-dark)')}
+                        />
+                        <div style={{ fontSize: 10, color: 'var(--text-soft)', lineHeight: 1.4 }}>
+                          This will use 1 phone number credit from your account ($3/mo per number).
+                        </div>
+                        {apError && <div style={{ fontSize: 11, color: '#991B1B', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 6, padding: '6px 10px' }}>{apError}</div>}
+                        <button
+                          onClick={async () => {
+                            setApLoading(true); setApError(null);
+                            try {
+                              const updated = await provisionAgentPhone(agent.id, apAreaCode || undefined);
+                              setAgent(updated);
+                              setApPanelOpen(false);
+                            } catch (err: unknown) {
+                              const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+                              setApError(msg || 'Failed to provision number.');
+                            } finally { setApLoading(false); }
+                          }}
+                          disabled={apLoading}
+                          style={{ background: 'var(--plum)', color: 'white', border: 'none', borderRadius: 7, padding: '8px 0', fontSize: 12, fontWeight: 600, cursor: apLoading ? 'not-allowed' : 'pointer', opacity: apLoading ? 0.6 : 1, fontFamily: 'var(--font-ui)' }}
+                        >
+                          {apLoading ? 'Provisioning…' : 'Generate Number'}
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 )}
               </div>
             </div>

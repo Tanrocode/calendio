@@ -34,6 +34,8 @@ export type AgentConfig = {
   is_active: boolean;
   created_at: string | null;
   agentphone_number: string | null;
+  agentphone_number_id: string | null;
+  agentphone_managed: boolean | null;
 };
 
 let agentsCache: AgentConfig[] | null = null;
@@ -207,5 +209,35 @@ export const getCalendarAuthUrl = async (next: string): Promise<{ url: string }>
     withCredentials: true,
     headers,
   });
+  return res.data;
+};
+
+// ── AGENTPHONE ────────────────────────────────────────────────────────────────
+
+export const connectAgentPhone = async (
+  agentId: number,
+  phone_number: string,
+  webhook_secret: string,
+): Promise<AgentConfig> => {
+  const headers = await getAuthHeaders();
+  const res = await axios.post(`/agents/${agentId}/agentphone/connect`, { phone_number, webhook_secret }, { headers });
+  agentsCache = null;
+  return res.data;
+};
+
+export const provisionAgentPhone = async (
+  agentId: number,
+  area_code?: string,
+): Promise<AgentConfig & { provisioned_number: string }> => {
+  const headers = await getAuthHeaders();
+  const res = await axios.post(`/agents/${agentId}/agentphone/provision`, { area_code: area_code || null }, { headers });
+  agentsCache = null;
+  return res.data;
+};
+
+export const disconnectAgentPhone = async (agentId: number): Promise<AgentConfig> => {
+  const headers = await getAuthHeaders();
+  const res = await axios.delete(`/agents/${agentId}/agentphone/connect`, { headers });
+  agentsCache = null;
   return res.data;
 };

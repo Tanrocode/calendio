@@ -27,16 +27,24 @@ router = APIRouter(prefix="/webhooks", tags=["agentphone"])
 logger = logging.getLogger("uvicorn.error")
 
 
-def _verify_signature(raw_body: bytes, signature_header: Optional[str], timestamp: Optional[str]) -> bool:
+def _verify_signature(
+    raw_body: bytes,
+    signature_header: Optional[str],
+    timestamp: Optional[str],
+    secret: Optional[str] = None,
+) -> bool:
     """HMAC-SHA256 verification of AgentPhone webhooks. Header format: 'sha256=<hex>'.
+
+    Uses `secret` when provided (BYON per-agent), otherwise falls back to the
+    global AGENTPHONE_WEBHOOK_SECRET env var (managed numbers).
 
     AgentPhone actually signs over `{X-Webhook-Timestamp}.{body}` (Svix-style),
     NOT just the body as their public docs suggest. We accept either scheme so
     the integration keeps working if they change/fix it later.
     """
-    secret = settings.AGENTPHONE_WEBHOOK_SECRET
-    if not secret:
-        logger.warning("AGENTPHONE_WEBHOOK_SECRET not set — skipping signature verification.")
+    resolved_secret = secret or settings.AGENTPHONE_WEBHOOK_SECRET
+    if not resolved_secret:
+        logger.warning("No webhook secret available — skipping signature verification.")
         return True
     if not signature_header:
         return False
@@ -46,7 +54,7 @@ def _verify_signature(raw_body: bytes, signature_header: Optional[str], timestam
         candidates.append(f"{timestamp}.".encode() + raw_body)
 
     for payload in candidates:
-        expected = hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
+        expected = hmac.new(resolved_secret.encode(), payload, hashlib.sha256).hexdigest()
         if hmac.compare_digest(f"sha256={expected}", signature_header):
             return True
     return False
@@ -321,10 +329,16 @@ async def agentphone_webhook(
         peek_event, peek_channel, peek_to, peek_from, bool(x_webhook_signature), len(raw),
     )
 
-    if not _verify_signature(raw, x_webhook_signature, x_webhook_timestamp):
+    # Look up the agent early so we can use its per-agent secret for BYON agents.
+    # This is a read-only DB query so it's safe before signature verification.
+    agent_row = _lookup_agent_by_number(peek_to or "")
+    per_agent_secret: Optional[str] = (agent_row or {}).get("agentphone_webhook_secret") or None
+
+    if not _verify_signature(raw, x_webhook_signature, x_webhook_timestamp, secret=per_agent_secret):
         logger.warning(
             "AgentPhone: signature mismatch. Received header=%r. "
-            "Check AGENTPHONE_WEBHOOK_SECRET in backend/.env matches the one in the AgentPhone dashboard.",
+            "For managed numbers check AGENTPHONE_WEBHOOK_SECRET; "
+            "for BYON numbers check the webhook secret saved for this agent.",
             x_webhook_signature,
         )
         raise HTTPException(status_code=401, detail="Invalid webhook signature")
@@ -344,7 +358,9 @@ async def agentphone_webhook(
         return JSONResponse({"ok": True, "ignored": event})
 
     to_number = data.get("to") or ""
-    agent_row = _lookup_agent_by_number(to_number)
+    # Re-use the early lookup; re-query only if to_number differs from peeked value
+    if peek_to != to_number:
+        agent_row = _lookup_agent_by_number(to_number)
     if not agent_row:
         logger.warning("AgentPhone webhook: no Calendio agent mapped to %s", to_number)
         if event == "agent.message" and channel == "voice":
