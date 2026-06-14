@@ -29,6 +29,10 @@ API_PORT = int(os.getenv('API_PORT', os.getenv('FLASK_PORT', '8000')))
 REDIRECT_LOCALHOST = f'http://localhost:{API_PORT}/oauth/callback'
 REDIRECT_127 = f'http://127.0.0.1:{API_PORT}/oauth/callback'
 
+
+def _is_local(hint: str) -> bool:
+    return 'localhost' in hint or '127.0.0.1' in hint
+
 # Keyed by OAuth state — avoids session cookie host-mismatch for PKCE
 _OAUTH_PENDING: Dict[str, Tuple[dict, float]] = {}
 _OAUTH_TTL = 300  # seconds
@@ -60,9 +64,16 @@ def _redirect_uri_and_frontend_for_request(request: Request):
     origin = (request.headers.get('origin') or '').rstrip('/')
     referer = request.headers.get('referer') or ''
     hint = origin or referer
+
     if '127.0.0.1' in hint:
         return REDIRECT_127, 'http://127.0.0.1:3000'
-    return REDIRECT_LOCALHOST, 'http://localhost:3000'
+    if _is_local(hint):
+        return REDIRECT_LOCALHOST, 'http://localhost:3000'
+
+    # Production: derive the backend callback URL from the incoming request,
+    # and use FRONTEND_URL env var for the post-auth redirect.
+    base = str(request.base_url).rstrip('/')
+    return f'{base}/oauth/callback', FRONTEND_URL
 
 
 def get_flow(redirect_uri: str) -> Flow:

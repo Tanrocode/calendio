@@ -1,6 +1,8 @@
 fastapi
 uvicorn
 pydantic
+itsdangerous
+python-multipart
 langchain==0.3.25
 langchain-core==0.3.59
 langchain-openai==0.3.16
