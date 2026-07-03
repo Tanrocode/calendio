@@ -33,7 +33,9 @@ app.add_middleware(
 app.add_middleware(
     SessionMiddleware,
     secret_key=_secret,
-    same_site='lax',
+    # Cross-site cookies (Netlify frontend → Render backend) require SameSite=None + Secure.
+    # In dev (COOKIE_SECURE=false), fall back to Lax so localhost still works.
+    same_site='none' if settings.COOKIE_SECURE else 'lax',
     https_only=settings.COOKIE_SECURE,
 )
 
