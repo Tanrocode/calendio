@@ -136,3 +136,6 @@ backend/agents/credentials.json
 DESIGN.md 
 PRODUCT.md
 skills-lock.json
+
+# Local Netlify folder
+.netlify
