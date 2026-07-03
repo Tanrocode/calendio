@@ -26,6 +26,7 @@ class AgentCreate(BaseModel):
     business_hours: Optional[str] = None
     agent_instructions: Optional[str] = None
     context: Optional[str] = None
+    address: Optional[str] = None
     agentphone_number: Optional[str] = None
 
 
@@ -36,6 +37,7 @@ class AgentUpdate(BaseModel):
     business_hours: Optional[str] = None
     agent_instructions: Optional[str] = None
     context: Optional[str] = None
+    address: Optional[str] = None
     is_active: Optional[bool] = None
     agentphone_number: Optional[str] = None
 
@@ -76,6 +78,7 @@ def create_agent(body: AgentCreate, current_user: CurrentUser = Depends(get_curr
             "services": body.services,
             "business_hours": body.business_hours,
             "agent_instructions": body.agent_instructions,
+            "address": body.address,
         })
         .execute()
     )
@@ -113,6 +116,7 @@ def agent_chat(
         business_hours=config_data.get("business_hours"),
         agent_instructions=config_data.get("agent_instructions"),
         context=config_data.get("context"),
+        address=config_data.get("address"),
     ), call_mode=True)
     # Individual turns are NOT logged here — the full conversation is saved as one
     # record when the user ends the call (POST /{agent_id}/conversations).
@@ -592,6 +596,7 @@ def book_from_transcript(
             business_hours=config_data.get("business_hours"),
             agent_instructions=config_data.get("agent_instructions"),
             context=config_data.get("context"),
+            address=config_data.get("address"),
         ),
         messages=body.messages,
         user_id=current_user.id,

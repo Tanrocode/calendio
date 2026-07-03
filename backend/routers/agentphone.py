@@ -150,6 +150,7 @@ def _run_agent(agent_config_row: Dict[str, Any], message: str, history: List[Dic
             business_hours=agent_config_row.get("business_hours"),
             agent_instructions=agent_config_row.get("agent_instructions"),
             context=agent_config_row.get("context"),
+            address=agent_config_row.get("address"),
         ),
         call_mode=call_mode,
     )
@@ -182,8 +183,11 @@ def _run_no_calendar_chat(agent_config_row: Dict[str, Any], message: str,
     hours = agent_config_row.get("business_hours") or ""
     instructions = agent_config_row.get("agent_instructions") or ""
     context = agent_config_row.get("context") or ""
+    address = agent_config_row.get("address") or ""
 
     system_parts = [f"You are an assistant for {name}."]
+    if address:
+        system_parts.append(f"Business address: {address}.")
     if services:
         system_parts.append(f"Services offered: {services}.")
     if hours:
@@ -277,6 +281,7 @@ def _handle_call_ended(agent_row: Dict[str, Any],
                     business_hours=agent_row.get("business_hours"),
                     agent_instructions=agent_row.get("agent_instructions"),
                     context=agent_row.get("context"),
+                    address=agent_row.get("address"),
                 ),
                 messages=messages,
                 user_id=agent_row["user_id"],

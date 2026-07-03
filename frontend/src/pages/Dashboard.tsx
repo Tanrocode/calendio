@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { getMetrics, getAgents, createAgent, deleteAgent, getRecentActivity } from '../services/api';
+import { getMetrics, getAgents, createAgent, getRecentActivity } from '../services/api';
 import type { AgentConfig, ConversationRow } from '../services/api';
 import Sidebar from '../components/Sidebar';
 import BusinessHoursEditor from '../components/BusinessHoursEditor';
@@ -369,11 +369,6 @@ const Dashboard: React.FC = () => {
     }
   };
 
-  const handleDelete = async (id: number) => {
-    await deleteAgent(id);
-    setAgents(prev => prev.filter(a => a.id !== id));
-  };
-
   const today = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
   const rate = metrics.total_conversations > 0
     ? Math.round((metrics.total_appointments_created / metrics.total_conversations) * 100) + '%'
@@ -419,77 +414,61 @@ const Dashboard: React.FC = () => {
             <StatTile label="Active Agents" value={`${activeCount} / ${agents.length}`} delta={agents.length - activeCount > 0 ? `${agents.length - activeCount} inactive` : undefined} />
           </div>
 
-          {/* Agents table */}
+          {/* Agents quick preview — full experience lives on /agents */}
           <div style={{ background: 'white', border: '1px solid var(--border)', borderRadius: 12, overflow: 'hidden' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 20px', borderBottom: '1px solid var(--border)' }}>
               <div>
-                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-dark)' }}>Agents</div>
-                <div style={{ fontSize: 11, color: 'var(--text-soft)', marginTop: 1 }}>{agents.length} configured</div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-dark)' }}>Your Agents</div>
+                <div style={{ fontSize: 11, color: 'var(--text-soft)', marginTop: 1 }}>{agents.length} configured · {activeCount} active</div>
               </div>
-              <button onClick={() => setShowModal(true)} style={{
-                display: 'flex', alignItems: 'center', gap: 6,
-                background: 'white', color: 'var(--text-mid)', border: '1px solid var(--border)',
-                borderRadius: 8, padding: '7px 14px', fontSize: 13, fontWeight: 500,
-                cursor: 'pointer', fontFamily: 'var(--font-ui)', transition: 'background 0.15s',
-              }}
-                onMouseEnter={e => (e.currentTarget.style.background = 'var(--lavender-bg)')}
-                onMouseLeave={e => (e.currentTarget.style.background = 'white')}
-              >
-                <Ic.Plus /> New Agent
+              <button onClick={() => navigate('/agents')} style={{
+                fontSize: 11, fontWeight: 600, color: 'var(--plum-mid)',
+                background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'var(--font-ui)',
+                display: 'flex', alignItems: 'center', gap: 4,
+              }}>
+                View all <Ic.Chevron />
               </button>
             </div>
-
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <thead>
-                <tr>
-                  {['Agent', 'Status', 'Created', '', ''].map((h, i) => (
-                    <th key={i} style={{
-                      fontSize: 11, fontWeight: 600, color: 'var(--text-soft)',
-                      textTransform: 'uppercase', letterSpacing: '0.07em',
-                      padding: '10px 20px', textAlign: 'left',
-                      background: '#FAFAFE', borderBottom: '1px solid var(--border)',
-                    }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {agents.map((agent, i) => {
+            {agents.length === 0 ? (
+              <div style={{ padding: '32px 20px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-dark)', opacity: 0.4 }}>No agents yet</div>
+                <button onClick={() => setShowModal(true)} style={{
+                  marginTop: 4, display: 'flex', alignItems: 'center', gap: 6,
+                  background: 'var(--plum)', color: 'white', border: 'none', borderRadius: 7,
+                  padding: '7px 14px', fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'var(--font-ui)',
+                }}>
+                  <Ic.Plus /> Create your first agent
+                </button>
+              </div>
+            ) : (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(220px,1fr))', gap: 10, padding: 14 }}>
+                {agents.slice(0, 6).map((agent, i) => {
                   const init = agent.name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
-                  const createdDate = agent.created_at
-                    ? new Date(agent.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-                    : '—';
+                  const color = agentColors[i % agentColors.length];
                   return (
-                    <AgentRow
+                    <div
                       key={agent.id}
-                      init={init}
-                      color={agentColors[i % agentColors.length]}
-                      name={agent.name}
-                      type="Voice Agent"
-                      active={agent.is_active !== false}
-                      created={createdDate}
-                      onConfigure={() => navigate(`/agent/${agent.id}`)}
-                      onDelete={() => handleDelete(agent.id)}
-                    />
+                      onClick={() => navigate(`/agent/${agent.id}`)}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 10,
+                        padding: '10px 12px', borderRadius: 10,
+                        background: '#FAFAFE', border: '1px solid var(--lavender-bg)',
+                        cursor: 'pointer', transition: 'background 0.12s, border-color 0.12s',
+                      }}
+                      onMouseEnter={e => { e.currentTarget.style.background = 'var(--lavender-bg)'; e.currentTarget.style.borderColor = 'var(--lavender-dark)'; }}
+                      onMouseLeave={e => { e.currentTarget.style.background = '#FAFAFE'; e.currentTarget.style.borderColor = 'var(--lavender-bg)'; }}
+                    >
+                      <div style={{ width: 30, height: 30, borderRadius: 7, background: color, color: 'white', fontSize: 11, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{init}</div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-dark)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{agent.name}</div>
+                        <div style={{ fontSize: 10, color: 'var(--text-soft)', marginTop: 1 }}>{agent.agentphone_number || 'No number'}</div>
+                      </div>
+                      <StatusPill active={agent.is_active !== false} />
+                    </div>
                   );
                 })}
-                <tr>
-                  <td colSpan={5} style={{ padding: '10px 20px' }}>
-                    <button onClick={() => setShowModal(true)} style={{
-                      display: 'inline-flex', alignItems: 'center', gap: 6,
-                      background: 'none', border: '1px dashed var(--lavender-dark)',
-                      borderRadius: 8, padding: '7px 14px', fontSize: 12, fontWeight: 600,
-                      color: 'var(--text-soft)', cursor: 'pointer', fontFamily: 'var(--font-ui)',
-                      transition: 'background 0.12s, color 0.12s, border-color 0.12s',
-                    }}
-                      onMouseEnter={e => { const el = e.currentTarget; el.style.background = 'var(--lavender-bg)'; el.style.color = 'var(--plum-mid)'; el.style.borderColor = 'var(--plum-xlight)'; }}
-                      onMouseLeave={e => { const el = e.currentTarget; el.style.background = 'none'; el.style.color = 'var(--text-soft)'; el.style.borderColor = 'var(--lavender-dark)'; }}
-                    >
-                      <Ic.Plus /> Add agent
-                    </button>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
+              </div>
+            )}
           </div>
 
           {/* Bottom row */}
@@ -575,58 +554,6 @@ const Dashboard: React.FC = () => {
         />
       )}
     </div>
-  );
-};
-
-/* ── AGENT TABLE ROW ── */
-const AgentRow: React.FC<{
-  init: string; color: string; name: string; type: string;
-  active: boolean; created: string;
-  onConfigure: () => void; onDelete: () => void;
-}> = ({ init, color, name, type, active, created, onConfigure, onDelete }) => {
-  const [hover, setHover] = useState(false);
-  return (
-    <tr
-      onClick={onConfigure}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
-      style={{ background: hover ? '#FAFAFE' : 'white', cursor: 'pointer', transition: 'background 0.12s' }}
-    >
-      <td style={{ padding: '12px 20px', borderBottom: '1px solid var(--lavender-bg)' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <div style={{ width: 30, height: 30, borderRadius: 8, background: color, color: 'white', fontSize: 11, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, letterSpacing: '0.02em' }}>{init}</div>
-          <div>
-            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-dark)' }}>{name}</div>
-            <div style={{ fontSize: 11, color: 'var(--text-soft)', marginTop: 1 }}>{type}</div>
-          </div>
-        </div>
-      </td>
-      <td style={{ padding: '12px 20px', borderBottom: '1px solid var(--lavender-bg)' }}>
-        <StatusPill active={active} />
-      </td>
-      <td style={{ padding: '12px 20px', borderBottom: '1px solid var(--lavender-bg)', fontSize: 13, color: 'var(--text-soft)', fontWeight: 400 }}>{created}</td>
-      <td style={{ padding: '12px 20px', borderBottom: '1px solid var(--lavender-bg)' }}>
-        <button onClick={e => { e.stopPropagation(); onConfigure(); }} style={{
-          background: 'none', border: '1px solid var(--border)', borderRadius: 6,
-          padding: '5px 10px', fontSize: 11, fontWeight: 600, color: 'var(--text-mid)',
-          cursor: 'pointer', fontFamily: 'var(--font-ui)', transition: 'background 0.12s, border-color 0.12s, color 0.12s',
-        }}
-          onMouseEnter={e => { const el = e.currentTarget; el.style.background = 'var(--lavender-bg)'; el.style.borderColor = 'var(--lavender-dark)'; el.style.color = 'var(--plum)'; }}
-          onMouseLeave={e => { const el = e.currentTarget; el.style.background = 'none'; el.style.borderColor = 'var(--border)'; el.style.color = 'var(--text-mid)'; }}
-        >Configure</button>
-      </td>
-      <td style={{ padding: '12px 20px', borderBottom: '1px solid var(--lavender-bg)' }}>
-        <button onClick={e => { e.stopPropagation(); onDelete(); }} style={{
-          background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-soft)',
-          padding: 4, borderRadius: 6, display: 'flex', transition: 'color 0.1s',
-        }}
-          onMouseEnter={e => (e.currentTarget.style.color = 'var(--red)')}
-          onMouseLeave={e => (e.currentTarget.style.color = 'var(--text-soft)')}
-        >
-          <Ic.X />
-        </button>
-      </td>
-    </tr>
   );
 };
 

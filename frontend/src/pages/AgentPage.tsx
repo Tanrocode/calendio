@@ -740,7 +740,7 @@ const AgentPage: React.FC = () => {
 
   // Edit mode — allows updating name, services, hours, instructions, context inline
   const [editMode, setEditMode] = useState(false);
-  const [editForm, setEditForm] = useState({ name: '', services: '', business_hours: '', agent_instructions: '', context: '' });
+  const [editForm, setEditForm] = useState({ name: '', address: '', services: '', business_hours: '', agent_instructions: '', context: '' });
   const [editSaving, setEditSaving] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
 
@@ -788,6 +788,7 @@ const AgentPage: React.FC = () => {
     if (!agent) return;
     setEditForm({
       name: agent.name,
+      address: agent.address ?? '',
       services: agent.services ?? '',
       business_hours: agent.business_hours ?? '',
       agent_instructions: agent.agent_instructions ?? '',
@@ -807,6 +808,7 @@ const AgentPage: React.FC = () => {
     try {
       const updated = await updateAgent(agent.id, {
         name: editForm.name.trim(),
+        address: editForm.address,
         services: editForm.services || undefined,
         business_hours: editForm.business_hours || undefined,
         agent_instructions: editForm.agent_instructions || undefined,
@@ -942,6 +944,25 @@ const AgentPage: React.FC = () => {
                     onFocus={e => (e.target.style.borderColor = 'var(--plum-xlight)')}
                     onBlur={e => (e.target.style.borderColor = 'var(--lavender-dark)')}
                   />
+                </div>
+              )}
+            </div>
+
+            {/* Address — view or edit */}
+            <div style={panelSection}>
+              <div style={panelSectionTitle}>Business Address</div>
+              {editMode ? (
+                <input
+                  value={editForm.address}
+                  onChange={e => setEditForm(f => ({ ...f, address: e.target.value }))}
+                  placeholder="e.g. 123 Main St, San Francisco, CA 94103"
+                  style={fieldInputStyle}
+                  onFocus={e => (e.target.style.borderColor = 'var(--plum-xlight)')}
+                  onBlur={e => (e.target.style.borderColor = 'var(--lavender-dark)')}
+                />
+              ) : (
+                <div style={{ fontSize: 13, color: agent.address ? 'var(--text-dark)' : 'var(--text-soft)', fontWeight: 500, lineHeight: 1.5, fontStyle: agent.address ? 'normal' : 'italic' }}>
+                  {agent.address || 'No address set'}
                 </div>
               )}
             </div>

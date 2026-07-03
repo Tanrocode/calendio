@@ -245,6 +245,8 @@ class SchedulingAgent:
             f"Today is {now.strftime('%A, %B %-d, %Y')}. Current time: {now.strftime('%-I:%M %p %Z')}.",
             f"You are an assistant for {self._escape(self.config.name)}.",
         ]
+        if getattr(self.config, "address", None):
+            parts.append(f"Business address: {self._escape(self.config.address)}.")
         if self.config.services:
             parts.append(f"Services offered: {self._escape(self.config.services)}.")
         if self.config.business_hours:
