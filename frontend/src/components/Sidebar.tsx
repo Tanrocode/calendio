@@ -27,9 +27,9 @@ const Ic = {
       <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/>
     </svg>
   ),
-  Mic: () => (
+  Stats: () => (
     <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-      <path strokeLinecap="round" strokeLinejoin="round" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4M12 3a4 4 0 014 4v4a4 4 0 01-8 0V7a4 4 0 014-4z"/>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M9 19V9m4 10V5m4 14v-7M5 21h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v14a2 2 0 002 2z"/>
     </svg>
   ),
   Settings: () => (
@@ -45,10 +45,10 @@ const Ic = {
 };
 
 const NAV_ITEMS = [
-  { label: 'Dashboard', icon: 'Grid', path: '/dashboard' },
+  { label: 'Dashboard',  icon: 'Grid',  path: '/dashboard' },
   { label: 'My Agents',  icon: 'Agent', path: '/agents' },
+  { label: 'Statistics', icon: 'Stats', path: '/statistics' },
   { label: 'Calendar',   icon: 'Cal',   path: '/calendar-demo' },
-  { label: 'Voice Demo', icon: 'Mic',   path: '/voice' },
 ];
 
 const Sidebar: React.FC = () => {

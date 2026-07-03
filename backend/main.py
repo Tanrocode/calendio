@@ -12,22 +12,20 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 from starlette.middleware.sessions import SessionMiddleware
 
+from .config import settings
 from .routers import agentphone, auth, calendar_demo, dashboard, log_agent, agent_config
 
 _secret = os.getenv('FLASK_SECRET_KEY')
 if not _secret:
     raise RuntimeError(
-        "Set FLASK_SECRET_KEY in backend/.env (required for Google OAuth sessions)."
+        "Set FLASK_SECRET_KEY (required for Google OAuth sessions)."
     )
 
 app = FastAPI(title="Calendio API", version="0.1.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        'http://127.0.0.1:3000',
-        'http://localhost:3000',
-    ],
+    allow_origins=settings.cors_origins,
     allow_credentials=True,
     allow_headers=['Content-Type', 'Authorization'],
     allow_methods=['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
@@ -36,7 +34,7 @@ app.add_middleware(
     SessionMiddleware,
     secret_key=_secret,
     same_site='lax',
-    https_only=False,
+    https_only=settings.COOKIE_SECURE,
 )
 
 app.include_router(dashboard.router)
@@ -54,5 +52,9 @@ def root():
 
 @app.get("/dashboard")
 def dashboard_redirect():
-    front = os.getenv("FRONTEND_URL", "http://127.0.0.1:3000").rstrip("/")
-    return RedirectResponse(url=f"{front}/dashboard", status_code=307)
+    return RedirectResponse(url=f"{settings.FRONTEND_URL}/dashboard", status_code=307)
+
+
+@app.get("/healthz")
+def healthz():
+    return {"ok": True}

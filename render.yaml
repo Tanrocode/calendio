@@ -1,0 +1,36 @@
+services:
+  - type: web
+    name: calendio-api
+    runtime: python
+    rootDir: backend
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /healthz
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: COOKIE_SECURE
+        value: "true"
+      # Populate the values below in the Render dashboard (Environment tab).
+      # They are declared here so a fresh deploy fails loudly if any are missing.
+      - key: FLASK_SECRET_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: AGENTPHONE_WEBHOOK_SECRET
+        sync: false
+      - key: AGENTPHONE_API_KEY
+        sync: false
+      - key: FRONTEND_URL
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false

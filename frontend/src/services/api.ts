@@ -31,6 +31,7 @@ export type AgentConfig = {
   business_hours: string | null;
   agent_instructions: string | null;
   context: string | null;
+  address: string | null;
   is_active: boolean;
   created_at: string | null;
   agentphone_number: string | null;
@@ -63,6 +64,7 @@ export const createAgent = async (data: {
   services?: string;
   business_hours?: string;
   agent_instructions?: string;
+  address?: string;
 }): Promise<AgentConfig> => {
   const headers = await getAuthHeaders();
   const res = await axios.post('/agents', data, { headers });
@@ -134,6 +136,7 @@ export const updateAgent = async (
     business_hours?: string;
     agent_instructions?: string;
     context?: string;
+    address?: string;
     is_active?: boolean;
     agentphone_number?: string | null;
   }
@@ -160,6 +163,29 @@ export const getRecentActivity = async (): Promise<ConversationRow[]> => {
   const headers = await getAuthHeaders();
   const res = await axios.get('/dashboard/recent-activity', { headers });
   return res.data.conversations ?? [];
+};
+
+export type AgentStat = {
+  agent_id: number;
+  name: string;
+  is_active: boolean;
+  total_calls: number;
+  calls_today: number;
+  appointments_booked: number;
+  conversion_rate: number;
+  calls_7d: number[];
+};
+
+export type AgentStatsResponse = {
+  totals: { total_calls: number; total_bookings: number; avg_conversion: number; active_agents: number };
+  agents: AgentStat[];
+  date_labels: string[];
+};
+
+export const getAgentStats = async (): Promise<AgentStatsResponse> => {
+  const headers = await getAuthHeaders();
+  const res = await axios.get('/dashboard/agent-stats', { headers });
+  return res.data;
 };
 
 // Save a complete call session transcript when the user ends the conversation

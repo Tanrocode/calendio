@@ -4,9 +4,10 @@ import Landing from './pages/Landing';
 import AuthPage from './pages/AuthPage';
 import AuthCallback from './pages/AuthCallback';
 import Dashboard from './pages/Dashboard';
-import VoiceAgent from './pages/VoiceAgent';
 import CalendarDemo from './pages/CalendarDemo';
 import AgentPage from './pages/AgentPage';
+import AgentsPage from './pages/AgentsPage';
+import StatsPage from './pages/StatsPage';
 import TestAgent from './pages/TestAgent';
 import ProtectedRoute from './components/ProtectedRoute';
 
@@ -22,7 +23,8 @@ function App() {
 
         <Route element={<ProtectedRoute />}>
           <Route path="/dashboard" element={<Dashboard />} />
-          <Route path="/voice" element={<VoiceAgent />} />
+          <Route path="/agents" element={<AgentsPage />} />
+          <Route path="/statistics" element={<StatsPage />} />
           <Route path="/calendar-demo" element={<CalendarDemo />} />
           <Route path="/agent/:id" element={<AgentPage />} />
           <Route path="/test/:token" element={<TestAgent />} />
